@@ -1,3 +1,5 @@
+class CLIError(Exception):
+    '''  '''
 class Error(Exception):
     '''  '''
 class ElementError(Error):

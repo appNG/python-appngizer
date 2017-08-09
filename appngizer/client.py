@@ -27,6 +27,11 @@ class Singleton(type):
     def __call__(self, *args, **kwargs):
         if self not in self._instances:
             self._instances[self] = super(Singleton, self).__call__(*args, **kwargs)
+        else:
+            if len(args) > 0:
+                if not self._instances[self].base_url.startswith(args[0]):
+                    del self._instances[self]
+                    self._instances[self] = super(Singleton, self).__call__(*args, **kwargs)
         return self._instances[self]
 
 class Client(object):
@@ -36,7 +41,7 @@ class Client(object):
     '''
     __metaclass__ = Singleton
     
-    #: regex to match a valid http|s:// url
+    # : regex to match a valid http|s:// url
     REGEX_URL = re.compile(
         r'^(?:http)s?://'  # http:// or https://
         r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # domain...
@@ -104,7 +109,7 @@ class Client(object):
                     pre_texts = []
                     for pre_text in pre_childs:
                         pre_texts.append(pre_text.text)
-                    raise appngizer.errors.HttpServerError('500 - Server error ({}): {}'.format(response.url,' '.join(pre_texts)))                   
+                    raise appngizer.errors.HttpServerError('500 - Server error ({}): {}'.format(response.url, ' '.join(pre_texts)))                   
                 else:
                     raise appngizer.errors.HttpServerError('500 - Server error ({})'.format(response.url))
             else:
@@ -144,9 +149,9 @@ class Client(object):
         if not url.endswith('/'):
             url = url + '/'
         # TODO: deactivated because this currently conflicts with url encoding 
-        #if self.REGEX_URL.match(url):
+        # if self.REGEX_URL.match(url):
         #    return url
-        #else:
+        # else:
         #    raise appngizer.errors.ClientError('Invalid url: {0}'.format(url))
         return url
     

@@ -75,23 +75,23 @@ class Element(object):
         All further appngizer elements will inherits from this class
     '''
     
-    #: Dictionary of used namespace prefixes
+    # : Dictionary of used namespace prefixes
     XPATH_DEFAULT_NAMESPACE = {'a': 'http://www.appng.org/schema/appngizer'}
-    #: Path to appngizer xsd schema file as string
+    # : Path to appngizer xsd schema file as string
     XSD_APPNGIZER_PATH = (os.path.dirname(os.path.realpath(sys.modules[__name__].__file__))) + '/appngizer.xsd'
-    #: List and order of entity fields which should be processed
+    # : List and order of entity fields which should be processed
     ALLOWED_FIELDS = []
-    #: List and order of entity fields which should be preserved
-    PRESERVED_FIELDS = ['description','displayName']
-    #: List and order of entity child elements which should be processed
+    # : List and order of entity fields which should be preserved
+    PRESERVED_FIELDS = ['description', 'displayName']
+    # : List and order of entity child elements which should be processed
     ALLOWED_CHILDS = []
-    #: List of entity child elements which should be processed via CDATA text
+    # : List of entity child elements which should be processed via CDATA text
     ALLOWED_CDATA_FIELDS = []
-    #: List and order of element attributes which should be processed
+    # : List and order of element attributes which should be processed
     ALLOWED_ATTRIBUTES = []
-    #: Entity element name of the entity
+    # : Entity element name of the entity
     TYPE = 'Element'
-    #: Entity element name of the entities
+    # : Entity element name of the entities
     TYPE_C = 'Elements'
 
     def __init__(self, name=None, parents=None, xml=None):
@@ -157,7 +157,7 @@ class Element(object):
             url['self'] = '/'.join([url['parent'], self.name])
         return url
 
-    def _strip_ns_prefix(self,xml):
+    def _strip_ns_prefix(self, xml):
         '''Strip namespaces from xml
 
         :param lxml.etree.Element xml: xml which should be stripped
@@ -228,7 +228,7 @@ class Element(object):
                         else:
                             log.debug('Skip update @{0} for {1}({2}) because there is no change'.format(*log_info))
                     else:
-                        log.debu('Create @{0} for {1}({2}) with value "{3}"'.format(attribute, self.type, self.name, text_value))
+                        log.debug('Create @{0} for {1}({2}) with value "{3}"'.format(attribute, self.type, self.name, text_value))
                         xml.attrib[attribute] = text_value
                         is_changed = True
                         log.info('XML was changed, @{} for {}({})'.format(*log_info))
@@ -313,7 +313,7 @@ class Element(object):
             xpath_childs = xml.xpath(xpath_childs_selector, namespaces=self.XPATH_DEFAULT_NAMESPACE)
 
             if childs in fdict:
-                for fchild in fdict.get(childs,[]):
+                for fchild in fdict.get(childs, []):
                     fchild_name = fchild.xml.get('name')
 
                     if len(xpath_childs[0].xpath('a:*[@name="{}"]'.format(fchild_name), namespaces=self.XPATH_DEFAULT_NAMESPACE)) == 0:
@@ -325,7 +325,7 @@ class Element(object):
                 for xchild in xpath_childs[0].xpath('a:*', namespaces=self.XPATH_DEFAULT_NAMESPACE):
                     xchild_name = xchild.get('name')
                     xchild_delete = True
-                    for fchild in fdict.get(childs,[]):
+                    for fchild in fdict.get(childs, []):
                         fchild_name = fchild.xml.get('name')
                         if fchild_name == xchild_name:
                             xchild_delete = False
@@ -337,7 +337,7 @@ class Element(object):
 
         # only set @name if self.name is not empty
         if self.name != None and self.name != '':
-          xml.set('name', self.name)
+            xml.set('name', self.name)
 
         log.info('Updated etree for {0}({1}) with given fdict {2}'.format(self.type, self.name, fdict))
         log.debug('and the xml result is: {}'.format(self.dump(xml)))
@@ -437,7 +437,7 @@ class Element(object):
         :return: bool (True if needed, False if not needed), xml of current entity, xml of desired entity
         '''
         current_xml = self.read()
-        desired_element = eval(self.type)(self.name,self.parents)
+        desired_element = eval(self.type)(self.name, self.parents)
         desired_element.xml = deepcopy(current_xml)
         desired_xml, is_update_needed = desired_element._update_xml_with_kwargs(desired_element.xml, fdict)
         log.info('Checked if update is needed for {0}({1}) and this is {2}'.format(self.type, self.name, str(is_update_needed)))
@@ -613,7 +613,6 @@ class Repository(Element):
         :return: xml of created repository
         '''
         fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
-        log.error(fdict)
         return self._create(fdict)
 
     def update(self, uri, type='LOCAL', remoteName=None, mode='ALL', enabled=True, strict=False, published=False, description=None):
@@ -656,7 +655,7 @@ class Property(Element):
     
     ALLOWED_FIELDS = ['value', 'defaultValue', 'description']
     ALLOWED_ATTRIBUTES = ['clob']
-    PRESERVED_FIELDS = ['description','defaultValue']
+    PRESERVED_FIELDS = ['description', 'defaultValue']
     TYPE = 'Property'
     TYPE_C = 'Properties'
 
@@ -839,7 +838,7 @@ class Application(Element):
                 if not self.is_assigned(site):
                     log.info('Assign {0}({1}) to site {2}'.format(self.type, self.name, site.name))
                     self.xml = self.read()
-                    request = XMLClient().request('POST', '/'.join([site.url['self'],self.url['self']]), str(self))
+                    request = XMLClient().request('POST', '/'.join([site.url['self'], self.url['self']]), str(self))
                     response_xml = request.response_transf
                     return response_xml
                 else:
@@ -851,6 +850,14 @@ class Application(Element):
         else:
             log.error('Assign {0}({1}) to site {2} failed, application is not installed'.format(self.type, self.name, site.name))
             raise appngizer.errors.ElementError("Assign {0}({1}) to site {2} failed, application is not installed".format(self.type, self.name, site.name))
+    def assign_by_name(self, site_name):
+        '''Assigns application to a site via site_name
+
+        :param elements.Site site_name: str
+        :return: xml of assigned application
+        '''
+        site = Site(site_name)
+        return self.assign(site)
 
     def deassign(self, site):
         '''Deassigns application from a site
@@ -863,7 +870,7 @@ class Application(Element):
                 if self.is_assigned(site):
                     log.info('Deassign {0}({1}) to site {2}'.format(self.type, self.name, site.name))
                     self.xml = self.read(site)
-                    request = XMLClient().request('DELETE', '/'.join([site.url['self'],self.url['self']]), str(self))
+                    request = XMLClient().request('DELETE', '/'.join([site.url['self'], self.url['self']]), str(self))
                     response_xml = request.response_transf
                     return response_xml
                 else:
@@ -875,6 +882,14 @@ class Application(Element):
         else:
             log.error('Deassign {0}({1}) to site {2} failed, application is not installed'.format(self.type, self.name, site.name))
             raise appngizer.errors.ElementError("Deassign {0}({1}) to site {2} failed, application is not installed".format(self.type, self.name, site.name))
+    def deassign_by_name(self, site_name):
+        '''Deassigns application from a site via site_name
+
+        :param elements.Site site_name: str
+        :return: xml of deassigned application
+        '''
+        site = Site(site_name)
+        return self.deassign(site)
 
     def deassign_from_all(self):
         '''Deassigns application from all sites
@@ -1164,7 +1179,7 @@ class Subject(Element):
         subject_digest = subject_xml.xpath('/a:subject/a:digest', namespaces=self.XPATH_DEFAULT_NAMESPACE)
         return subject_digest[0].text
 
-    def digest_match_hash(self,digest,hashed):
+    def digest_match_hash(self, digest, hashed):
         '''Checks if digest match hash
         
         If digest does not start with '$2a$' it will handled as plaintext
@@ -1353,7 +1368,7 @@ class Permission(Element):
         Class to manage roles of an appNG instance
     '''
     
-    ALLOWED_FIELDS = ['application', 'description']
+    ALLOWED_FIELDS = ['description']
     TYPE = 'Permission'
     TYPE_C = 'Permissions'
 
@@ -1412,7 +1427,7 @@ class Platform(Element):
     TYPE_C = 'Platform'
 
     def __init__(self, name='', parents=None, xml=None):
-        #: Platform entity does not have a name attribute, we set it to an empty string
+        # : Platform entity does not have a name attribute, we set it to an empty string
         self.name = ''
         self.type = self.TYPE
         self.type_c = self.TYPE_C
@@ -1468,7 +1483,7 @@ class Database(Element):
     TYPE_C = 'Databases'
 
     def __init__(self, name='', parents=None, xml=None):
-        #: Database entity does not have a name attribute, we set it to an empty string
+        # : Database entity does not have a name attribute, we set it to an empty string
         self.name = ''
         self.type = self.TYPE
         self.type_c = self.TYPE_C
@@ -1545,7 +1560,7 @@ class Database(Element):
         fdict['password'] = password_hash
 
         current_xml = self.read()
-        desired_element = eval(self.type)(self.name,self.parents)
+        desired_element = eval(self.type)(self.name, self.parents)
         desired_element.xml = deepcopy(current_xml)
         desired_xml, is_update_needed = desired_element._update_xml_with_kwargs(desired_element.xml, fdict)
         log.info('Checked if update is needed for {0}({1}) and this is {2}'.format(self.type, self.name, str(is_update_needed)))
@@ -1733,11 +1748,9 @@ class Packages(Elements):
     TYPE_C = 'Packages'
 
     def _set_url(self):
-        # For package there is no entity type path component
+        # For a package there is no entity type path component
         url = {'self':None}
-        parents_url = ''
-        for parent in self.parents:
-            parents_url = '/'.join(parents_url, parent.url['self'])
+        parents_url = self.parents[0].url['self']
         url['self'] = '/'.join([parents_url])
         return url
 
