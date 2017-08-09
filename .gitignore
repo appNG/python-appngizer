@@ -33,10 +33,14 @@ junit.xml
 coverage.xml
 
 # Build and docs folder/files
+.pybuild
 build/*
 dist/*
+debian/*
 sdist/*
 docs/api/*
-docs/_build/*
+docs/build/*
 cover/*
 MANIFEST
+deb_dist/*
+*.tar.gz

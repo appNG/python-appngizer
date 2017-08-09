@@ -1,14 +1,4 @@
 # Add your requirements here like:
 bcrypt
-copy
-hashlib
-json
-logging
 lxml
-re
 requests
-traceback
-urllib
-urlparse
-xmljson
-yaml
