@@ -6,11 +6,8 @@ appngizer.cli -- cli client for appNGizer
 appngizer.cli is a cli client for appNGizer
 
 @author:     Björn Pritzel
-
 @copyright:  2017 aiticon GmbH. All rights reserved.
-
 @license:    Apache License 2.0
-
 @contact:    info@aiticon.com
 '''
 import copy
@@ -29,8 +26,8 @@ from timeit import default_timer as timer
 
 __all__ = []
 __version__ = appngizer.__version__
-__date__ = '2017-07-18'
-__updated__ = '2017-07-18'
+__date__ = '2017-08-11'
+__updated__ = '2017-08-11'
 
 def _init_xmlclient(**connection_args):
     if connection_args.get('connection_url',False) and connection_args.get('connection_ssecret',False):
