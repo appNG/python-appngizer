@@ -310,7 +310,7 @@ def setup_package():
 
     needs_sphinx = {'build_sphinx', 'upload_docs'}.intersection(sys.argv)
     sphinx = ['sphinx'] if needs_sphinx else []
-    setup(setup_requires=['six', 'pyscaffold>=2.5a0,<2.6a0'] + sphinx,
+    setup(setup_requires=['six', 'stdeb', 'setuptools_scm', 'pyscaffold>=2.5a0,<2.6a0'] + sphinx,
           use_pyscaffold=True, use_scm_version={ 'version_scheme':'guess-next-dev' }, cmdclass=cmdclass)
 
 
