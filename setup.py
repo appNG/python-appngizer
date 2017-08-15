@@ -19,7 +19,6 @@ import argparse
 
 from setuptools import setup
 from setuptools import find_packages
-from setuptools import setup
 
 # The BuildManPage code is distributed
 # under the same License of Python
@@ -312,7 +311,7 @@ def setup_package():
     needs_sphinx = {'build_sphinx', 'upload_docs'}.intersection(sys.argv)
     sphinx = ['sphinx'] if needs_sphinx else []
     setup(setup_requires=['six', 'pyscaffold>=2.5a0,<2.6a0'] + sphinx,
-          use_pyscaffold=True, cmdclass=cmdclass)
+          use_pyscaffold=True, use_scm_version={ 'version_scheme':'guess-next-dev' }, cmdclass=cmdclass)
 
 
 if __name__ == "__main__":
