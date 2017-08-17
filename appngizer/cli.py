@@ -1,14 +1,10 @@
 #!/usr/bin/python2.7
 # encoding: utf-8
 '''
-appngizer.cli -- cli client for appNGizer
-
-appngizer.cli is a cli client for appNGizer
-
-@author:     Björn Pritzel
-@copyright:  2017 aiticon GmbH. All rights reserved.
-@license:    Apache License 2.0
-@contact:    info@aiticon.com
+    
+    This module contains a rudimentary command line script which can be 
+    used directly on the shell.
+        
 '''
 import copy
 import traceback
@@ -26,8 +22,8 @@ from timeit import default_timer as timer
 
 __all__ = []
 __version__ = appngizer.__version__
-__date__ = '2017-08-11'
-__updated__ = '2017-08-11'
+__date__ = appngizer.__date__
+__updated__ = appngizer.__updated__
 
 def _init_xmlclient(**connection_args):
     if connection_args.get('connection_url',False) and connection_args.get('connection_ssecret',False):

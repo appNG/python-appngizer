@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 '''
-    
     This module contains network clients which are used to communicate
     with an appNGizer instance.
     
-    Currently there is only an implementation of a :class:`XMLClient`.
-    
+    Currently there is only an implementation of a :class:`XMLClient`.    
 '''
 import logging
 import requests
