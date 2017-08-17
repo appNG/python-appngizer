@@ -1,23 +1,19 @@
 #!/usr/bin/python2.7
 # encoding: utf-8
 '''
-appngizer.cli -- cli client for appNGizer
-
-appngizer.cli is a cli client for appNGizer
-
-@author:     Björn Pritzel
-@copyright:  2017 aiticon GmbH. All rights reserved.
-@license:    Apache License 2.0
-@contact:    info@aiticon.com
+    
+    This module contains a rudimentary command line script which can be 
+    used directly on the shell.
+        
 '''
 import copy
 import traceback
 import json
-import xmljson
 import yaml
 
 import appngizer
 from appngizer.elements import *
+from appngizer.utils.xmljson import BadgerFish, Yahoo
 
 from argparse import ArgumentParser
 from argparse import RawDescriptionHelpFormatter
@@ -26,8 +22,8 @@ from timeit import default_timer as timer
 
 __all__ = []
 __version__ = appngizer.__version__
-__date__ = '2017-08-11'
-__updated__ = '2017-08-11'
+__date__ = appngizer.__date__
+__updated__ = appngizer.__updated__
 
 def _init_xmlclient(**connection_args):
     if connection_args.get('connection_url',False) and connection_args.get('connection_ssecret',False):
@@ -155,9 +151,9 @@ def _render_output(output, mode='XML'):
     output = _strip_appngizer_specials(output)
 
     if mode == 'JSON':
-        return json.dumps(xmljson.badgerfish.data(output))
+        return json.dumps(BadgerFish().data(output))
     if mode == 'YAML':
-        json_dump = json.dumps(xmljson.yahoo.data(output))
+        json_dump = json.dumps(Yahoo().data(output))
         json_dict = json.loads(json_dump) 
         return yaml.safe_dump(json_dict, allow_unicode=True, default_flow_style=False)
     else:
