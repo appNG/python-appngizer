@@ -13,11 +13,11 @@ appngizer.cli is a cli client for appNGizer
 import copy
 import traceback
 import json
-import xmljson
 import yaml
 
 import appngizer
 from appngizer.elements import *
+from appngizer.utils.xmljson import BadgerFish, Yahoo
 
 from argparse import ArgumentParser
 from argparse import RawDescriptionHelpFormatter
@@ -155,9 +155,9 @@ def _render_output(output, mode='XML'):
     output = _strip_appngizer_specials(output)
 
     if mode == 'JSON':
-        return json.dumps(xmljson.badgerfish.data(output))
+        return json.dumps(BadgerFish().data(output))
     if mode == 'YAML':
-        json_dump = json.dumps(xmljson.yahoo.data(output))
+        json_dump = json.dumps(Yahoo().data(output))
         json_dict = json.loads(json_dump) 
         return yaml.safe_dump(json_dict, allow_unicode=True, default_flow_style=False)
     else:
