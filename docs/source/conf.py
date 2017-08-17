@@ -62,7 +62,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'appngizer'
-copyright = u'2017, Björn Pritzel'
+copyright = u'2017, aiticon GmbH'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -218,7 +218,7 @@ latex_elements = {
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
   ('index', 'user_guide.tex', u'appngizer Documentation',
-   u'Björn Pritzel', 'manual'),
+   u'aiticon GmbH', 'manual'),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
