@@ -2,12 +2,23 @@
 Changelog
 =========
 
+Version 1.14.2
+==============
+
+* Task
+  * [PYAPP-6] - Setup Jenkins Build Pipeline
+
+Version 1.14.1
+==============
+
+* Bug
+  * [PYAPP-7] - Specifying package dependencies
+
 Version 1.14.0
 ==============
 
-- Initial release
-- Feature:
-  - [PYAPP-2] - Add cli script
-- Task:
-  - [PYAPP-1] - Initialising and commit python-appngizer project to vcs
-  - [PYAPP-5] - Release 1.14.0
+* Initial release
+* Feature
+  * [PYAPP-2] - Add cli script
+* Task
+  * [PYAPP-1] - Initialising and commit python-appngizer project to vcs
