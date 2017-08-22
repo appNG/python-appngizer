@@ -15,7 +15,7 @@ node {
       aptly_dist = 'unstable'
     }
     // Set and debianize branch_name as version component
-    def git_branch_name = branch_name.replace(/\W/,".")
+    def git_branch_name = branch_name.replaceAll("\\W",".")
     
     stage ('notifyStart'){
       emailext (
