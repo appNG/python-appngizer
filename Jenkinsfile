@@ -56,6 +56,12 @@ node {
           sh "mkdir -p '${doc_dir}'"
           // copy documentation
           sh "cp -R * '${doc_dir}'"
+        }
+        if ( branch_name.startsWith('release/') ) {
+          sh "rm -rf '${doc_dir}-release'"
+          sh "mkdir -p '${doc_dir}-release'"
+          // copy documentation
+          sh "cp -R * '${doc_dir}-release'"
         } else {
           //start with a clean directory
           sh "rm -rf '${doc_dir}-${git_branch_name}'"
