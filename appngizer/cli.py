@@ -64,6 +64,17 @@ def _get_parents(element,vargs):
         if vargs.get('application',None):
             parents.append(Application(vargs['application']))
         return parents
+    if element in ['grant']:
+        parents = []
+        parents.append(Site(vargs['gsite']))
+        parents.append(Application(vargs['application']))
+        return parents
+    if element in ['grants']:
+        parents = []
+        parents.append(Site(vargs['gsite']))
+        parents.append(Application(vargs['application']))
+        return parents
+
 def _get_childs(element,vargs,parents=None):
     childs = []
     if element in ['role']:
@@ -111,6 +122,8 @@ def _execute(nargs):
         if key not in element.ALLOWED_FIELDS and key not in element.ALLOWED_CHILDS:
             if key == 'salt' and element_name == 'database' and cmd_name == 'update':
                 pass
+            elif key == 'site' and element_name == 'grant':
+                pass
             else:
                 vargs.pop(key)
     
@@ -118,7 +131,7 @@ def _execute(nargs):
         if cmd_name == 'create':
             out = element.create(**vargs)
         if cmd_name == 'read':
-            if element_name == 'package':
+            if element_name in ['package','grant']:
                 out = element.read(**vargs)
             else:
                 out = element.read()
@@ -317,6 +330,20 @@ USAGE
     das_p = cmd_p.add_parser('deassign-application', help='Deassign an application to a site')
     das_p.add_argument('-n', dest='name', action='store', help='Name of application')
     das_p.add_argument('-s', dest='site', action='store', help='Name of site')
+    
+    # site application grant
+    rgrs_p = cmd_p.add_parser('read-grants', help='Read grants of a site application')
+    rgrs_p.add_argument('-a', dest='application', action='store', help='Name of application')
+    rgrs_p.add_argument('-gs', dest='gsite', action='store', help='Name of granting site')
+    rgr_p = cmd_p.add_parser('read-grant', help='Read grant for a site to access a site application')
+    rgr_p.add_argument('-a', dest='application', action='store', help='Name of application')
+    rgr_p.add_argument('-s', dest='site', action='store', help='Name of site')
+    rgr_p.add_argument('-gs', dest='gsite', action='store', help='Name of granting site')
+    ggr_p = cmd_p.add_parser('grant-grants', help='Read grant for a site to access a site application')
+    ggr_p.add_argument('-a', dest='application', action='store', help='Name of application')
+    ggr_p.add_argument('-s', dest='site', action='store', help='Name of site')
+    ggr_p.add_argument('-ss', dest='sites', action='store', help='List of sites')
+    xxxxxxxxxxxxxxxxxxxxxx
 
     # package/s
     rps_p = cmd_p.add_parser('read-packages', help='Read packages')
