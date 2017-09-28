@@ -149,6 +149,8 @@ def _execute(nargs):
         if cmd_name == 'deassign':
             if element_name == 'application':
                 out = element.deassign_by_name(nargs.site)
+        if cmd_name == 'grant':
+            out = element.grant(**vargs)
     except appngizer.errors.ElementError as e:
         raise
         
@@ -339,11 +341,10 @@ USAGE
     rgr_p.add_argument('-a', dest='application', action='store', help='Name of application')
     rgr_p.add_argument('-s', dest='site', action='store', help='Name of site')
     rgr_p.add_argument('-gs', dest='gsite', action='store', help='Name of granting site')
-    ggr_p = cmd_p.add_parser('grant-grants', help='Read grant for a site to access a site application')
+    ggr_p = cmd_p.add_parser('grant-grants', help='Set grant for a list of sites to access a site application')
     ggr_p.add_argument('-a', dest='application', action='store', help='Name of application')
-    ggr_p.add_argument('-s', dest='site', action='store', help='Name of site')
-    ggr_p.add_argument('-ss', dest='sites', action='store', help='List of sites')
-    xxxxxxxxxxxxxxxxxxxxxx
+    ggr_p.add_argument('-gs', dest='gsite', action='store', help='Name of granting site')
+    ggr_p.add_argument('-ss', dest='sites', nargs='+', action='store', help='List of sites')
 
     # package/s
     rps_p = cmd_p.add_parser('read-packages', help='Read packages')

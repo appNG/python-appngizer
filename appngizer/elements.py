@@ -633,7 +633,6 @@ class Grant(Element):
         else:
             raise appngizer.errors.ElementError("Seems that site ({}) does not exist".format(site))
         
-
     def read(self,site):
         '''Reads grant for a site
 
@@ -1852,32 +1851,34 @@ class Grants(Elements):
     
     def _grant(self, fdict):
         '''Updates entity from a given dict
-
         :param dict fdict: dictionary of fields for the existing entity
         :return: xml of the updated entity
         '''
-        for site in fdict['sites']:
-            for grant in self.elements:
-                if grant.xml.xpath('@site')[0] == site:
-                    if grant.xml.xpath('text()')[0] == 'false':
-                        log.info('Grant access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
-                    else:
-                        log.info('Already have access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
-        return True
+        
+        for grant in self.xml.xpath('*', namespaces=self.XPATH_DEFAULT_NAMESPACE):
+            grant.getparent().remove(grant)
 
-    def _is_update_needed(self, fdict):
-        '''Checks if update of entity is needed
+        grant_i = 0
+        for grant in self.elements:
+            site = grant.xml.xpath('@site')[0]
+            if site in fdict['sites']:
+                if grant.xml.xpath('text()')[0] == 'false':
+                    grant.xml.text = 'true'
+                    log.info('Grant access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
+                else:
+                    log.info('Already have access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
+            else:
+                if grant.xml.xpath('text()')[0] == 'true':
+                    grant.xml.text = 'false'
+                    log.info('Remove access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
+            self.xml.insert(grant_i, grant.xml)
+            grant_i += 1
 
-        :param dict fdict: dictionary of fields for the existing entity
-        :return: bool (True if needed, False if not needed), xml of current entity, xml of desired entity
-        '''
-        current_xml = self.read()
-        desired_element = eval(self.type)(self.name, self.parents)
-        desired_element.xml = deepcopy(current_xml)
-        desired_xml, is_update_needed = desired_element._update_xml_with_kwargs(desired_element.xml, fdict)
-        log.info('Checked if update is needed for {0}({1}) and this is {2}'.format(self.type, self.name, str(is_update_needed)))
-        return is_update_needed, current_xml, desired_xml
-    
+        request = XMLClient().request('PUT', self.url['self'], str(self))
+        response_xml = request.response_transf
+        self._set_xml(self.read())
+        return response_xml
+   
     def grant(self, sites):
         '''Set grants for list of sites 
 
@@ -1886,6 +1887,40 @@ class Grants(Elements):
         '''
         fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
         return self._grant(fdict)
+    
+    def _is_update_needed(self, sites):
+        '''Checks if update of entity is needed
+
+        :param dict fdict: dictionary of fields for the existing entity
+        :return: bool (True if needed, False if not needed), xml of current entity, xml of desired entity
+        '''
+        current_element = deepcopy(self)
+        current_element.xml = current_element.read()
+        desired_element = Grants(parents=self.parents)
+        desired_element.xml = deepcopy(current_element.xml)
+        
+        is_update_needed = False
+        
+        for grant in desired_element.xml.xpath('*', namespaces=self.XPATH_DEFAULT_NAMESPACE):
+            site = grant.get('site')
+            if site in sites:
+                if grant.xpath('text()')[0] == 'false':
+                    grant.text = 'true'
+                    is_update_needed = True
+            else:
+                if grant.xpath('text()')[0] == 'true':
+                    grant.text = 'false'
+                    is_update_needed = True
+
+        return is_update_needed, self.xml, desired_element.xml
+    
+    def is_update_needed(self, sites):
+        '''Checks if update of grants is needed
+
+        :param list sites: list of sites
+        :return: bool (True if needed, False if not needed), xml of current grants, xml of desired grants
+        '''
+        return self._is_update_needed(sites)
 
 
 class Applications(Elements):
