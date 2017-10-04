@@ -573,6 +573,76 @@ class Site(Element):
             return False
 
 
+class Grant(Element):
+    '''
+        Class to manage application access for a site
+    '''
+    
+    TYPE = 'Grant'
+    TYPE_C = 'Grants'
+    
+    def __init__(self, name='', parents=None, xml=None):
+        # : Grant entity does not have a name attribute, we set it to an empty string
+        self.name = ''
+        self.type = self.TYPE
+        self.type_c = self.TYPE_C
+        self.parents = self._set_parents(parents)
+        self.url = self._set_url()
+        self.xml = self._set_xml(xml)
+        
+    def _set_url(self):
+        '''Returns dictionary with various url paths of the entity
+
+        :return: dict of url paths (f.e. self url, parent url)
+        '''
+        url = {'self':None, 'parent':None}
+        parents_url = ''
+        for parent in self.parents:
+            parents_url = '/'.join([parents_url, parent.url['self']])
+        url['parent'] = '/'.join([parents_url])
+        url['self'] = '/'.join([url['parent'], self.type_c.lower()])
+        return url
+
+    def _get_xml_template(self):
+        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
+        xml_template = Element.grant(
+            site=''
+        )
+        xml_etree = etree.fromstring(etree.tostring(xml_template))
+        return xml_etree
+
+    def _read(self,site):
+        '''Reads grant for a site
+        
+        :param str site: name of site
+        :return: xml of grant
+        '''
+        request = XMLClient().request('GET', self.url['self'])
+        response_xml = request.response_transf
+        grant_xml = None
+
+        for grant_grants_xml in list(response_xml):
+            if str(grant_grants_xml.xpath("@site", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0]) == site:
+                grant_xml = grant_grants_xml
+                break
+
+        if grant_xml is not None:
+            log.info("Read {0}({1})".format(self.type, site))
+            # We must return a copy here otherwise root element is still packages
+            return deepcopy(grant_xml)
+        else:
+            raise appngizer.errors.ElementError("Seems that site ({}) does not exist".format(site))
+        
+    def read(self,site):
+        '''Reads grant for a site
+
+        :return: xml of the entity
+        '''
+        log_info = [self.type, site]
+        log.info("Read {}({})".format(*log_info))
+        return self._read(site)
+
+
 class Repository(Element):
     '''
         Class to manage repositories of an appNG instance
@@ -906,7 +976,7 @@ class Application(Element):
             msg = 'Deassign {}({}) from all sites failed, application is not installed'.format(self.type, self.name)
             log.error(msg)
             raise appngizer.errors.ElementError(msg)
-
+        
 
 class Package(Element):
     '''
@@ -1713,6 +1783,144 @@ class Properties(Elements):
     '''
     TYPE = 'Property'
     TYPE_C = 'Properties'
+
+
+class Grants(Elements):
+    '''
+        Class to manage application access for a site
+    '''
+    
+    ALLOWED_FIELDS = ['sites']
+    TYPE = 'Grant'
+    TYPE_C = 'Grants'
+    
+    def __init__(self, name='', parents=[], xml=None):
+        '''
+            :param list parents: List of :class:`Element` objects which are the parent of the current entity
+            :param lxml.etree.Element xml: xml representation of the entity
+        '''
+        self.name = ''
+        self.type = self.TYPE_C
+        self.type_element = self.TYPE
+        self.parents = parents
+        self.url = self._set_url()
+        self.xml = self._set_xml(xml)
+        self.elements = self._set_elements()
+        
+    def _read(self):
+        '''Reads entity and return as etree
+
+        :return: xml of the entity
+        '''
+        request = XMLClient().request('GET', self.url['self'])
+        response_xml = request.response_transf
+        return response_xml
+    
+    def _set_url(self):
+        url = {'self':None}
+        if not self.parents:
+            url['self'] = self.type_element.lower()
+        else:
+            parents_url = ''
+            for parent in self.parents:
+                parents_url = '/'.join([parents_url, parent.url['self']])
+            url['self'] = '/'.join([parents_url, self.TYPE_C.lower()])
+        return url
+
+    def _set_elements(self):
+        '''Sets and return list of all :class:`Element` objects
+        
+        :return: list of :class:`Element` objects
+        '''
+        elements = []
+        elements_xml = self.read()
+        for element_xml in list(elements_xml):
+            site = element_xml.xpath('@site')[0]
+            element = Grant(parents=self.parents,xml=Grant(parents=self.parents).read(site)) 
+            elements.append(element)
+            
+        self.elements = elements
+        return elements
+    
+    def _get_xml_template(self):
+        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
+        xml_template = Element.grants(
+        )
+        xml_etree = etree.fromstring(etree.tostring(xml_template))
+        return xml_etree
+    
+    def _grant(self, fdict):
+        '''Updates entity from a given dict
+        :param dict fdict: dictionary of fields for the existing entity
+        :return: xml of the updated entity
+        '''
+        
+        for grant in self.xml.xpath('*', namespaces=self.XPATH_DEFAULT_NAMESPACE):
+            grant.getparent().remove(grant)
+
+        grant_i = 0
+        for grant in self.elements:
+            site = grant.xml.xpath('@site')[0]
+            if site in fdict['sites']:
+                if grant.xml.xpath('text()')[0] == 'false':
+                    grant.xml.text = 'true'
+                    log.info('Grant access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
+                else:
+                    log.info('Already have access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
+            else:
+                if grant.xml.xpath('text()')[0] == 'true':
+                    grant.xml.text = 'false'
+                    log.info('Remove access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
+            self.xml.insert(grant_i, grant.xml)
+            grant_i += 1
+
+        request = XMLClient().request('PUT', self.url['self'], str(self))
+        response_xml = request.response_transf
+        self._set_xml(self.read())
+        return response_xml
+   
+    def grant(self, sites):
+        '''Set grants for list of sites 
+
+        :param list of sites...
+        :return: xml of updated grants
+        '''
+        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
+        return self._grant(fdict)
+    
+    def _is_update_needed(self, sites):
+        '''Checks if update of entity is needed
+
+        :param dict fdict: dictionary of fields for the existing entity
+        :return: bool (True if needed, False if not needed), xml of current entity, xml of desired entity
+        '''
+        current_element = deepcopy(self)
+        current_element.xml = current_element.read()
+        desired_element = Grants(parents=self.parents)
+        desired_element.xml = deepcopy(current_element.xml)
+        
+        is_update_needed = False
+        
+        for grant in desired_element.xml.xpath('*', namespaces=self.XPATH_DEFAULT_NAMESPACE):
+            site = grant.get('site')
+            if site in sites:
+                if grant.xpath('text()')[0] == 'false':
+                    grant.text = 'true'
+                    is_update_needed = True
+            else:
+                if grant.xpath('text()')[0] == 'true':
+                    grant.text = 'false'
+                    is_update_needed = True
+
+        return is_update_needed, self.xml, desired_element.xml
+    
+    def is_update_needed(self, sites):
+        '''Checks if update of grants is needed
+
+        :param list sites: list of sites
+        :return: bool (True if needed, False if not needed), xml of current grants, xml of desired grants
+        '''
+        return self._is_update_needed(sites)
 
 
 class Applications(Elements):
