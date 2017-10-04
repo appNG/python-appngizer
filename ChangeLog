@@ -5,8 +5,12 @@ Changelog
 Version 1.14.2
 ==============
 
+* Improvement
+  * [PYAPP-11] - Grant application access to site via appNGizer
+
 * Task
   * [PYAPP-6] - Setup Jenkins Build Pipeline
+  * [PYAPP-10] - Release v.1.14.2
 
 Version 1.14.1
 ==============
