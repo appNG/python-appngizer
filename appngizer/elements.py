@@ -498,6 +498,107 @@ class Element(object):
         return is_valide_xml
 
 
+class newSite(Element):
+    '''
+        Class to manage a site of an appNG instance
+    '''
+    
+    ALLOWED_FIELDS = ['host', 'domain', 'description', 'active', 'createRepositoryPath']
+    TYPE = 'Site'
+    TYPE_C = 'Sites'
+    
+    def __init__(self, name=None):
+        '''
+        :param str name: Name of entity
+        '''
+        self.name = name
+        self.type = self.TYPE
+        self.type_c = self.TYPE_C
+        self.url = self._set_url()
+        self.xml = self._set_xml(xml)
+        
+    def read(self):
+        '''Reads entity
+
+        :return: xml of the entity
+        '''
+        log_info = [self.type, self.name]
+        log.info("Read {}({})".format(*log_info))
+        return self._read()
+    def _read(self):
+        '''Reads entity and return as etree
+
+        :return: xml of the entity
+        '''
+        request = XMLClient().request('GET', self.url['self'])
+        response_xml = request.response_transf
+        return response_xml
+
+    def _get_xml_template(self):
+        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
+        xml_template = Element.site(
+            Element.host(),
+            Element.domain(),
+            Element.description(),
+            Element.active('false'),
+            Element.createRepositoryPath('false'),
+            name=''
+        )
+        xml_etree = etree.fromstring(etree.tostring(xml_template))
+        return xml_etree
+
+    def create(self, host, domain, description=None, active=True, createRepositoryPath=True):
+        '''Creates a new site
+
+        :param str host: host header
+        :param str domain: primary domain with protocol
+        :param str description: short description
+        :param bool active: activate site
+        :param bool createRepositoryPath: create site directory in repository
+        :return: xml of created site
+        '''
+        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
+        return self._create(fdict)
+
+    def update(self, host, domain, description=None, active=True, createRepositoryPath=True):
+        '''Updates an existing site
+
+        :param str host: host header
+        :param str domain: primary domain with protocol
+        :param str description: short description
+        :param bool active: activate site
+        :param bool createRepositoryPath: create site directory in repository
+        :return: xml of updated site
+        '''
+        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
+        return self._update(fdict)
+
+    def is_update_needed(self, host, domain, description=None, active=True, createRepositoryPath=True):
+        '''Checks if update of site is needed
+
+        :param str host: host header
+        :param str domain: primary domain with protocol
+        :param str description: short description
+        :param bool active: activate site
+        :param bool createRepositoryPath: create site directory in repository
+        :return: bool (True if needed, False if not needed), xml of current site, xml of desired site
+        '''
+        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
+        return self._is_update_needed(fdict)
+
+    def reload(self):
+        '''Reloads a site
+
+        :return: bool (True if reloaded, False if not reloaded)
+        '''
+        if self.exist():
+            if XMLClient().request('PUT', self.url['self'] + '/reload'):
+                return True
+            else:
+                return False
+        else:
+            return False
+    
 class Site(Element):
     '''
         Class to manage a site of an appNG instance
