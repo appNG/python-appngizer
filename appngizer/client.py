@@ -39,21 +39,12 @@ class Client(object):
     '''
     __metaclass__ = Singleton
     
-    # : regex to match a valid http|s:// url
-    REGEX_URL = re.compile(
-        r'^(?:http)s?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-
     def __init__(self, url, sharedsecret):
         '''
         :param str url: url to an appNGizer instance
         :param str sharedsecret: sharedsecret to be used
         '''
-        self.base_url = self.validate_url(url)
+        self.base_url = url
         self.net = ClientNetwork()
         self.content_type = 'text/plain'
         self.sharedsecret = sharedsecret
@@ -68,7 +59,7 @@ class Client(object):
         '''
         self.net.session.headers.update({'Content-Type': 'text/plain'})
         self.content_type = 'text/plain'
-        response = self.net.request('POST', self.base_url, data=self.sharedsecret)
+        response = self.net.request('POST', self.validate_url(self.base_url), data=self.sharedsecret)
         self.content_type = 'application/xml'
         self.net.session.headers.update({'Content-Type': self.content_type})
         self._process_response(response)
@@ -87,7 +78,7 @@ class Client(object):
         '''Checks response
         
         :param requests.Response response: response object
-        :return: bool (True if valid, Falise if not valid)
+        :return: bool (True if valid, False if not valid)
         '''
         response_ct = response.headers.get('Content-Type')
         if not response.ok:
@@ -146,11 +137,6 @@ class Client(object):
         '''
         if not url.endswith('/'):
             url = url + '/'
-        # TODO: deactivated because this currently conflicts with url encoding 
-        # if self.REGEX_URL.match(url):
-        #    return url
-        # else:
-        #    raise appngizer.errors.ClientError('Invalid url: {0}'.format(url))
         return url
     
 class XMLClient(Client):
@@ -162,7 +148,7 @@ class XMLClient(Client):
         :param str url: url to an appNGizer instance
         :param str sharedsecret: sharedsecret to be used
         '''
-        self.base_url = self.validate_url(url)
+        self.base_url = url
         self.net = ClientNetwork()
         self.content_type = 'application/xml'
         self.sharedsecret = sharedsecret
@@ -200,7 +186,6 @@ class ClientNetwork(object):
         kwargs.setdefault('headers', {})
         response = self.session.request(method, url, *args, **kwargs)
         log.debug('Received %s. Headers: %s.', response, response.headers)
-        log.debug('Content: %r', response.content)
         return response
     
     def request(self, method, url, *args, **kwargs):

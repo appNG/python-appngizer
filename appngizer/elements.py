@@ -1,836 +1,814 @@
 # -*- coding: utf-8 -*-
 '''
-    
     This module contains all appNG entities which currently can managed
-    via an appNGizer instance:
-    
-    - :class:`Property`
-    - :class:`Site`
-    - :class:`Repository`
-    - :class:`Application`
-    - :class:`Package`
-    - :class:`Subject`
-    - :class:`Group`
-    - :class:`Role`
-    - :class:`Permission`
-    - :class:`Database`
-    - :class:`Platform` (only for reload)
-    
-    To do this the :attr:`appngizer.elements.Element.xml` attribute 
-    helds the xml representation of the entity as an :class:`lxml.etree.Element`.
-    
-    CRUD methods on the entity are done via the 
-    :class:`appngizer.client.XMLClient` where the :attr:`appngizer.elements.Element.xml` attribute
-    is added to the data of the HTTP/S request if needed (usually in a PUT/POST request).
-    
-    There also container elements where appNG entities of the same entity
-    type are held. Currently they are only usable for read 
-    operations (f.e. read all available Sites) but can be the start point
-    for further improvements like bulk operatios.
-    
-    - :class:`Properties`
-    - :class:`Sites`
-    - :class:`Repositories`
-    - :class:`Applications`
-    - :class:`Packages`
-    - :class:`Subjects`
-    - :class:`Groups`
-    - :class:`Roles`
-    - :class:`Permissions`
-    - :class:`Databases`
-    
-    To address an appNG entity we use their :attr:`appngizer.elements.Element.name` attribute, the entity 
-    type name :const:`appngizer.elements.Element.TYPE` and their :attr:`appngizer.elements.Element.parents` attribute.
-    
-    **Examples:**
-    
-    - Site entity 'an_appng_site'::
-    
-        Site('an_appng_site')
-      
-    - Site application property 'a_site_app_property'::
-    
-        Property('a_site_app_property', parents=[ Site('an_appng_site') , Application('an_app') ] )
-
+    via an appNGizer instance.
 '''
 import sys
 import os
 import logging
 import bcrypt
 import hashlib
+import re
+
 from copy import deepcopy
+from collections import OrderedDict
+from requests import Response
+from requests.api import request
 
 from lxml import etree
 from lxml import objectify
+from lxml.objectify import ObjectifiedElement, BoolElement
 
 import appngizer.errors
 from appngizer.client import XMLClient
 
 log = logging.getLogger(__name__)
 
+# TODO: think about not using parent site for entity application
 
-class Element(object):
+class XMLElement(object):
     '''
-        Abstract class of an appNGizer element
-        All further appngizer elements will inherits from this class
+        Abstract class for an XML appNG entity
     '''
-    
-    # : Dictionary of used namespace prefixes
+    # : Dictionary of XML namespaces
     XPATH_DEFAULT_NAMESPACE = {'a': 'http://www.appng.org/schema/appngizer'}
-    # : Path to appngizer xsd schema file as string
+    # : Default namespace prefix as string
+    NS_PREFIX = '{'+XPATH_DEFAULT_NAMESPACE['a']+'}'
+    # : Path to appNGizer XSD schema file as string
     XSD_APPNGIZER_PATH = (os.path.dirname(os.path.realpath(sys.modules[__name__].__file__))) + '/appngizer.xsd'
-    # : List and order of entity fields which should be processed
-    ALLOWED_FIELDS = []
-    # : List and order of entity fields which should be preserved
-    PRESERVED_FIELDS = ['description', 'displayName']
-    # : List and order of entity child elements which should be processed
-    ALLOWED_CHILDS = []
-    # : List of entity child elements which should be processed via CDATA text
-    ALLOWED_CDATA_FIELDS = []
-    # : List and order of element attributes which should be processed
-    ALLOWED_ATTRIBUTES = []
-    # : Entity element name of the entity
+    # : Entity element name
     TYPE = 'Element'
-    # : Entity element name of the entities
+    # : Entities element name
     TYPE_C = 'Elements'
-
-    def __init__(self, name=None, parents=None, xml=None):
-        '''
-        :param str name: Name of entity
-        :param list parents: List of :class:`Element` objects which are parents of the current entity
-        :param lxml.etree.Element xml: xml representation of the entity
-        '''
-        self.name = name
-        self.type = self.TYPE
-        self.type_c = self.TYPE_C
-        self.parents = self._set_parents(parents)
-        self.url = self._set_url()
-        self.xml = self._set_xml(xml)
-
+    # : OrderedDict of entity fields which should be processed and initialised
+    FIELDS = OrderedDict()
+    # List of FIELDS where value should be preserved if not given in 
+    PRESERVED_FIELDS = []
+    # List of FIELDS where value should be threatened as CDATA 
+    CDATA_FIELDS = []
+    # : OrderedDict of entity element attributes which should be processed and initialised
+    ATTRIBUTES = OrderedDict()
+    # : OrderedDict of entity child elements which should be processed and initialised
+    CHILDS = OrderedDict()
+    # : OrderedDict of entity sub elements which should be processed but not initialised
+    SUBELEMENTS = OrderedDict()
+    
     def __str__(self):
-        '''String representation of the object
-
+        '''Returns XML string representation of the object
         :return: str
         '''
         return self.dump()
 
-    def _set_parents(self, parents=None):
-        '''Sets parents attribute if given
+    def _get_xml_template(self):
+        '''Returns objectify.ObjectElement generated from class constants:
         
-        :param list parents: list of appngizer element objects who are parents of the entity
-        :return: list of appngizer element objects who are parents of the entity
-        '''
-        parent_elements = None
-        if parents:
-            parent_elements = []
-            for parent in parents:
-                parent_elements.append(parent)
-        self.parents = parent_elements
-        return parent_elements
+           self.FIELDS are entity fields as SubElements
+           self.ATTRIBUTES are entity attributes as ObjectElement Attributes
+           self.CHILDS are child entities as SubElements
 
-    def _set_xml(self, xml):
-        '''Sets self.xml attribute from a given arg xml or if None get xml from xml template method
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        Element = objectify.ElementMaker(annotate=False, 
+                                         namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
+        xml_template = Element(self.__class__.__name__.lower())
+        # SubElements
+        for field in self.FIELDS.keys():
+            ns_field = '{'+self.XPATH_DEFAULT_NAMESPACE['a']+'}'+field
+            objectify.SubElement(xml_template, ns_field, 
+                                 namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
+            xml_template[field] = self.FIELDS[field]
+        # ObjectElement Attributes
+        for attribute in self.ATTRIBUTES.keys():
+            attribute_value = self.ATTRIBUTES.get(attribute, None)
+            if type(attribute_value) == bool:
+                attribute_value = str(attribute_value).lower() 
+            xml_template.set( attribute, attribute_value )
+            # If attribute also exists as class attribute we use value of it 
+            if hasattr(self, attribute):
+                xml_template.set(attribute, self.__getattribute__(attribute))
+        # SubElements
+        for child in self.CHILDS.keys():
+            ns_field = '{'+self.XPATH_DEFAULT_NAMESPACE['a']+'}'+child
+            objectify.SubElement(xml_template, ns_field, 
+                                 namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
+            xml_template[child] = self.CHILDS[child]
+        return xml_template
+    
+    def _set_xml(self, source):
+        '''Set self.xml by a given source
         
-        :param lxml.etree.Element xml: xml which should be set
-        :return: xml which was set
+        :param lxml.objectify.ObjectifiedElement source: As ObjectifiedElement                
+        :param Requests.response source: As Response object
+        :param dict source: As dictionary               
+        :param lxml.objectify.BoolElement source: As BoolElement               
+        :return: self
+        '''
+        if type(source) == BoolElement:
+            self.xml = source
+        if type(source) == ObjectifiedElement:
+            self._set_xml_from_xml_obj(source)
+        if type(source) == Response:
+            xml_obj = objectify.fromstring(source.content)
+            self._set_xml_from_xml_obj(xml_obj)
+        if type(source) == dict:    
+            self._set_xml_from_dict(source)
+        return self
+
+    def _set_xml_from_dict(self, xdict):
+        '''Process dictionary and call particular methods to set self.xml
+               
+           The dictionary should contains a flat key:value structure. Which kind 
+           of XML component an dictionary item address is controlled by the corresponding
+           key in following class constants:
+           
+           self.FIELDS are entity fields as SubElements
+           self.ATTRIBUTES are entity attributes as ObjectElement attributes
+           self.CHILDS are child entities as SubElements
+           self.SUBELEMENTS are child entities as SubElements directly under the root element
+        
+        :param dict xdict: Dictionary of XML components to set
+        :return: None
+        '''
+        # Process fields
+        for field in self.FIELDS.iterkeys():
+            if field in xdict:
+                self._set_xml_field(field, xdict[field])
+        # Process attributes
+        for attribute in self.ATTRIBUTES.iterkeys():
+            if attribute in xdict:
+                self._set_xml_attribute(attribute, xdict[field])
+        # Process childs
+        for child in self.CHILDS.iterkeys():
+            if child in xdict:
+                self._set_xml_child(child, xdict[child])
+        # Process elements
+        for subelement in self.SUBELEMENTS:
+            if subelement in xdict:
+                self._set_xml_subelement(subelement, kwargs[subelement])
+    
+    def _set_xml_from_xml_obj(self, xml_obj):
+        '''Process :class:`lxml.objectify.ObjectifiedElement` and call particular methods to set self.xml
+               
+           The ObjectifiedElement is processed directly but still against checking
+           against following constants:
+           
+           self.FIELDS are entity fields as SubElements
+           self.ATTRIBUTES are entity attributes as ObjectElement attributes
+           self.CHILDS are child entities as SubElements
+           self.SUBELEMENTS are child entities as SubElements directly under the root element
+
+           As we deal here with an ObjectifiedElement the xml structure 
+           can be of any form and just have to validate against the xsd schema. 
+        
+        :param lxml.objectify.ObjectifiedElement xml_obj: ObjectifiedElement of the entity
+        :return: None
+        '''
+        # Process fields
+        for field in self.FIELDS.iterkeys():
+            if hasattr(xml_obj, field):
+                self._set_xml_field(field, xml_obj[field])
+        # Process attributes
+        for attribute in self.ATTRIBUTES.iterkeys():
+            if attribute in xml_obj.attrib:
+                self._set_xml_attribute(attribute, xml_obj.attrib[attribute])
+        # Process childs
+        for child in self.CHILDS.iterkeys():
+            if hasattr(xml_obj, child):
+                self._set_xml_child(child, list(xml_obj[child]))
+        # Process subelements
+        for subelement in self.SUBELEMENTS:
+            if hasattr(xml_obj, subelement):
+                self._set_xml_subelement(subelement, list(xml_obj[subelement]))    
+
+    def _set_xml_field(self, field, value):
+        '''Set self.xml field element
+               
+        The field element is a direct child of the root element and is identified by 
+        his field name.
+        
+        An already existing value can be preserved when given in self.PRESERVED_FIELDS.
+        
+        :param str field: Name of field
+        :param * value: Value of field, takes any supported lxml.objectify data type
+        :return: None
+        '''
+        # If field in PRESERVED_FIELDS an empty value will be not applied 
+        if value == None or value == '':
+            if field not in self.PRESERVED_FIELDS:
+                self.xml.__setattr__(field, value)
+        else:
+            # If field in CDATA_FIELDS value is threatened as CDATA
+            if field in self.CDATA_FIELDS:
+                cdata_value = etree.CDATA(value)
+                self.xml.__setattr__(field, cdata_value)
+            else:
+                self.xml.__setattr__(field, value)
+
+    def _set_xml_attribute(self, attribute, value):
+        '''Set self.xml element attributes
+               
+        The xml attributes are attributes of the root element.
+        
+        :param str field: Name of attribute
+        :param str value: Value of attribute
+        :return: None
+        '''
+        self.xml.set(attribute, value)
+        
+    def _set_xml_child(self, child, childs):
+        '''Set self.xml field with child elements
+        
+        The type of a child item in childs must be a :class:`lxml.objectify.ObjectifiedElement`.
+
+        :param str child: Name of child container xml element
+        :param list childs: list of child elements from type lxml.objectify.ObjectifiedElement 
+        :return: None
+        '''
+        if len(childs) > 0:
+            child_tag = childs[0].tag
+            # handle the case we got an child element container instead of elements themself
+            if child_tag == self.NS_PREFIX+child:
+                container_childs = childs[0].getchildren()
+                if len(container_childs) > 0:
+                    child_tag = container_childs[0].tag
+                    self.xml[child].__setattr__(child_tag,container_childs)
+                else:
+                    self.xml.__delattr__(child)
+                    self.xml.__setattr__(child, None) 
+            else:
+                self.xml[child].__setattr__(child_tag,childs)
+        else:
+            self.xml.__delattr__(child)
+            self.xml.__setattr__(child, None) 
+
+    def _set_xml_subelement(self, subelement, subelements):
+        '''Set self.xml subelements
+        
+        The type of a subelement item in subelements must be a lxml.objectify.ObjectifiedElement
+
+        :param str subelement: Name of subelement xml element
+        :param list subelements: List of subelements from type :class:`lxml.objectify.ObjectifiedElement` 
+        :return: None
+        '''
+        self.xml.__setattr__(subelement, subelements)
+                
+    def get_xml_str(self, xml_obj=None):
+        '''Deannotates :class:`lxml.objectify.ObjectifiedElement` and return as string
+        
+        :param lxml.objectify.ObjectifiedElement xml_obj: ObjectifiedElement to return as string
+        :return: ObjectifiedElement as string
+        '''
+        if xml_obj is None:
+            xml_obj = self.xml
+        xml_deannot = deepcopy(xml_obj)
+        objectify.deannotate(xml_deannot, pytype=True, xsi=True, 
+                             xsi_nil=True, cleanup_namespaces=True)
+        return etree.tostring(xml_deannot)
+    
+    def convert_xml_obj_to_xml_element(self, xml_obj=None):
+        '''Convert :class:`lxml.objectify.ObjectifiedElement` to :class:`lxml.etree.Element`
+
+        :param lxml.objectify.ObjectifiedElement xml_obj: ObjectifiedElement to convert
+        :return: lxml.etree.Element
+        '''
+        if xml_obj is None:
+            xml_obj = self.xml
+        return etree.fromstring( self.get_xml_str(xml_obj) )
+    
+    def convert_xml_element_to_xml_obj(self, xml=None):
+        '''Convert :class:`lxml.etree.Element` to :class:`lxml.objectify.ObjectifiedElement`
+
+        :param lxml.etree.Element xml: Element to convert
+        :return: lxml.objectify.ObjectifiedElement
         '''
         if xml is None:
-            xml = self._get_xml_template()
-        self.is_valide_xml(xml)
-        self.xml = xml
-        return xml
+            xml = self.convert_xml_obj_to_xml_element(self.xml)
+        return objectify.fromstring(etree.tostring(xml))
 
-    def _set_url(self):
-        '''Returns dictionary with various url paths of the entity
+    def strip_ns_prefix(self, xml):
+        '''Strip namespaces from :class:`lxml.etree.Element` and return it
 
-        :return: dict of url paths (f.e. self url, parent url)
-        '''
-        url = {'self':None, 'parent':None}
-        if not self.parents:
-            url['parent'] = self.type.lower()
-            url['self'] = '/'.join([url['parent'], self.name])
-        else:
-            parents_url = ''
-            for parent in self.parents:
-                parents_url = '/'.join([parents_url, parent.url['self']])
-            url['parent'] = '/'.join([parents_url, self.type.lower()])
-            url['self'] = '/'.join([url['parent'], self.name])
-        return url
-
-    def _strip_ns_prefix(self, xml):
-        '''Strip namespaces from xml
-
-        :param lxml.etree.Element xml: xml which should be stripped
-        :return: xml which was stripped
+        :param lxml.etree.Element xml: Element to strip
+        :return: lxml.etree.Element
         '''
         query = "descendant-or-self::*[namespace-uri()!='']"
-        for element in xml.xpath(query):
-            element.tag = etree.QName(element).localname
-            etree.cleanup_namespaces(xml)
+        elements = xml.xpath(query)
+        if elements is not None:
+            for element in xml.xpath(query):
+                element.tag = etree.QName(element).localname
+                etree.cleanup_namespaces(xml)
         return xml
 
-    def _update_xml_with_kwargs(self, xml, fdict):
-        '''Updates etree with a given dictionary. Currently limited to a
-        flat root/field/text() xml structure.
-
-        Which fields and root attributes should be processed and in
-        which order is controlled by ALLOWED_ATTRIBUTES|FIELDS|CHILDS.
-
-        fields in PRESERVED_FIELDS will hold their text value even
-        no value is given in the dict.
-        
-        :param lxml.etree.Element xml: xml which should be updated
-        :param dict fdict: dictionary of fields which should be applied to the xml
-        :return: xml which was updated, bool (True if xml was changed, False if xml was unchanged)
-        '''
-        log.info('Update etree for {0}({1}) with given fdict {2}'.format(self.type, self.name, fdict))
-        log.debug('and given xml {}'.format(self.dump(xml)))
-
-        is_changed = False
-
-        # processing root attributes
-        for attribute in self.ALLOWED_ATTRIBUTES:
-            log.debug('Processing root attribute {}'.format(attribute))
-            log_info = [attribute, self.type, self.name]
-
-            xpath_attribute_selector = '/a:{}/@{}[1]'.format(self.type.lower(), attribute)
-            xpath_attribute = xml.xpath(xpath_attribute_selector, namespaces=self.XPATH_DEFAULT_NAMESPACE)
-            if len(xpath_attribute) > 0:
-                xpath_attribute = xpath_attribute[0]
-            else:
-                xpath_attribute = None
-
-            if attribute in fdict:
-                if type(fdict[attribute]) == type(None):
-                    # if value of fdict is None we try to delete the field element
-                    log.info('Remove @{} for {}({})'.format(*log_info))
-                    if xpath_attribute is not None:
-                        xml.attrib.pop(attribute, None)
-                        is_changed = True
-                        log.info('XML was changed, @{} for {}({})'.format(*log_info))
-                else:
-                    # if value of fdict is not None we create or update the XML attribute
-                    if type(fdict[attribute]) == type(True):
-                        # Handle boolean as str.lower
-                        text_value = str(fdict[attribute]).lower()
-                    else:
-                        # Otherwise we use always str
-                        text_value = str(fdict[attribute])
-
-                    if xpath_attribute is not None:
-                        if xml.get(attribute) != text_value:
-                            if xml.get(attribute) == None and text_value == '':
-                                log.debug('Skip update @{} for {}({}) because we handle "" as text = None'.format(*log_info))
-                            else:
-                                xml.set(attribute, text_value)
-                                is_changed = True
-                                log.info('XML was changed, @{} for {}({})'.format(*log_info))
-                        else:
-                            log.debug('Skip update @{0} for {1}({2}) because there is no change'.format(*log_info))
-                    else:
-                        log.debug('Create @{0} for {1}({2}) with value "{3}"'.format(attribute, self.type, self.name, text_value))
-                        xml.attrib[attribute] = text_value
-                        is_changed = True
-                        log.info('XML was changed, @{} for {}({})'.format(*log_info))
-
-        # processing fields which are the 1st lvl childs of the root
-        for field in self.ALLOWED_FIELDS:
-            log.debug('Processing field {}'.format(field))
-            log_info = [field, self.type, self.name]
-
-            xpath_field_selector = '/a:{}/a:{}[1]'.format(self.type.lower(), field)
-            xpath_fields = xml.xpath(xpath_field_selector, namespaces=self.XPATH_DEFAULT_NAMESPACE)
-            if len(xpath_fields) > 0:
-                xpath_field = xpath_fields[0]
-            else:
-                xpath_field = None
-
-            if field in fdict:
-                # if value of fdict is None we try to delete the field element
-                if type(fdict[field]) == type(None) or str(fdict[field]).lower() == 'none':
-
-                    if not field in self.PRESERVED_FIELDS:
-                        log.info('Removed {} element for {}({})'.format(*log_info))
-                        if xpath_field is not None:
-                            xpath_field.getparent().remove(xpath_field)
-                            is_changed = True
-                            log.info('XML was changed in {} element for {}({})'.format(*log_info))
-                    else:
-                        log.debug('Didnt remove {} element for {}({}) because we should preserve it'.format(*log_info))
-                else:
-                    # if value of fdict is not None we create or update the XML element
-                    if type(fdict[field]) == type(True):
-                        # Handle boolean as str.lower
-                        text_value = str(fdict[field]).lower()
-                    else:
-                        # Otherwise we use always str
-                        text_value = str(fdict[field])
-
-                    if xpath_field is not None:
-                        if xpath_field.text != text_value:
-                            if xpath_field.text == None and text_value == '':
-                                log.debug('Skip update {} element for {}({}) because we handle "" as text = None'.format(*log_info))
-                            else:
-                                if field in self.ALLOWED_CDATA_FIELDS:
-                                    text_value = etree.CDATA(text_value)
-
-                                xpath_field.text = text_value
-                                is_changed = True
-                                log.info('XML was changed in {} element for {}({})'.format(*log_info))
-                        else:
-                            log.debug('Skip update {0} element for {1}({2}) because there is no change'.format(*log_info))
-                    else:
-                        log.debug('Create {0} element for {1}({2}) with value "{3}"'.format(field, self.type, self.name, text_value))
-
-                        # add +1 offset if links element is in xml
-                        xpath_links_selector = '/a:{}/a:{}[1]'.format(self.type.lower(), 'links')
-                        xpath_links = xml.xpath(xpath_links_selector, namespaces=self.XPATH_DEFAULT_NAMESPACE)
-
-                        if len(xpath_links) == 1:
-                            xml.insert(self.ALLOWED_FIELDS.index(field) + 1, etree.Element("{http://www.appng.org/schema/appngizer}" + "{0}".format(field)))
-                        else:
-                            xml.insert(self.ALLOWED_FIELDS.index(field), etree.Element("{http://www.appng.org/schema/appngizer}" + "{0}".format(field)))
-
-                        xpath_fields = xml.xpath(xpath_field_selector, namespaces=self.XPATH_DEFAULT_NAMESPACE)
-                        if len(xpath_fields) > 0:
-                            xpath_field = xpath_fields[0]
-                        else:
-                            xpath_field = None
-
-                        if field in self.ALLOWED_CDATA_FIELDS:
-                            text_value = etree.CDATA(text_value)
-
-                        xpath_field.text = text_value
-                        log.debug('Created {0} element for {1}({2}) with value "{3}"'.format(field, self.type, self.name, text_value))
-                        is_changed = True
-                        log.info('XML was changed in {} element for {}({})'.format(*log_info))
-        # processing child entities which are also 1st lvl childs of the root
-        for childs in self.ALLOWED_CHILDS:
-            log.debug('Processing child {}'.format(childs))
-            log_info = [childs, self.type, self.name]
-
-            xpath_childs_selector = '/a:{}/a:{}[1]'.format(self.type.lower(), childs)
-            xpath_childs = xml.xpath(xpath_childs_selector, namespaces=self.XPATH_DEFAULT_NAMESPACE)
-
-            if childs in fdict:
-                for fchild in fdict.get(childs, []):
-                    fchild_name = fchild.xml.get('name')
-
-                    if len(xpath_childs[0].xpath('a:*[@name="{}"]'.format(fchild_name), namespaces=self.XPATH_DEFAULT_NAMESPACE)) == 0:
-                        log.debug('Create {0} child-element for {1}({2})'.format(childs, self.type, self.name))
-                        xpath_childs[0].append(fchild.xml)
-                        is_changed = True
-                        log.debug('Created {0} child-element for {1}({2})'.format(childs, self.type, self.name))
-
-                for xchild in xpath_childs[0].xpath('a:*', namespaces=self.XPATH_DEFAULT_NAMESPACE):
-                    xchild_name = xchild.get('name')
-                    xchild_delete = True
-                    for fchild in fdict.get(childs, []):
-                        fchild_name = fchild.xml.get('name')
-                        if fchild_name == xchild_name:
-                            xchild_delete = False
-                    if xchild_delete:
-                        log.debug('Remove {0} child-element for {1}({2})'.format(childs, self.type, self.name))
-                        xchild.getparent().remove(xchild)
-                        is_changed = True
-                        log.debug('Removed {0} child-element for {1}({2})'.format(childs, self.type, self.name))
-
-        # only set @name if self.name is not empty
-        if self.name != None and self.name != '':
-            xml.set('name', self.name)
-
-        log.info('Updated etree for {0}({1}) with given fdict {2}'.format(self.type, self.name, fdict))
-        log.debug('and the xml result is: {}'.format(self.dump(xml)))
-        return xml, is_changed
-
-    def _get_xml_template(self):
-        '''Generates and returns empty etree xml representation of the entity
-
-        :return: xml template of the entity
-        '''
-        xml_template = etree.Element('{' + self.XPATH_DEFAULT_NAMESPACE['a'] + '}' + '{0}'.format(self.type.lower()))
-        return xml_template
-
-    def _create(self, fdict):
-        '''Creates entity from a given dict
-
-        :param dict fdict: dictionary of fields for the new entity
-        :return: xml of the created entity
-        '''
-        self.xml = self._update_xml_with_kwargs(self.xml, fdict)[0]
-        if self.is_valide_xml(self.xml):
-            if not self.exist():
-                log.info('Create {0}({1})'.format(self.type, self.name))
-                request = XMLClient().request('POST', self.url['parent'], str(self))
-                response_xml = request.response_transf
-                self._set_xml(self.read())
-                return response_xml
-            else:
-                log.error("Create failed. {0}({1}) already exist".format(self.type, self.name))
-                raise appngizer.errors.ElementError("Create failed. {0}({1}) already exist".format(self.type, self.name))
-        else:
-            log.error("Current XML for {0}({1}) does not validate".format(self.type, self.name))
-            raise appngizer.errors.ElementError("Current XML for {0}({1}) does not validate: {2}".format(self.type, self.name, self.dump()))
-
-    def _read(self):
-        '''Reads entity and return as etree
-
-        :return: xml of the entity
-        '''
-        request = XMLClient().request('GET', self.url['self'])
-        response_xml = request.response_transf
-        return response_xml
-
-    def _update(self, fdict):
-        '''Updates entity from a given dict
-
-        :param dict fdict: dictionary of fields for the existing entity
-        :return: xml of the updated entity
-        '''
-        self._set_xml(self.read())
-        if self._is_update_needed(fdict)[0]:
-            log.info('Update {0}({1})'.format(self.type, self.name))
-            self.xml = self._update_xml_with_kwargs(self.xml, fdict)[0]
-            if self.is_valide_xml(self.xml):
-                request = XMLClient().request('PUT', self.url['self'], str(self))
-                response_xml = request.response_transf
-                self._set_xml(self.read())
-                return response_xml
-            else:
-                log.error("Current XML for {0}({1}) does not validate".format(self.type, self.name))
-                raise appngizer.errors.ElementError("Current XML for {0}({1}) does not validate: {2}".format(self.type, self.name, self.dump()))
-        else:
-            log.warn("No update needed for {0}({1})".format(self.type, self.name))
-            return self.xml
-
-    def _delete(self):
-        '''Deletes entity
-
-        :return: bool (True if was successfully)
-        '''
-        if self.exist():
-            log.info("Delete {0}({1})".format(self.type, self.name))
-            XMLClient().request('DELETE', self.url['self'])
-            return True
-        else:
-            raise appngizer.errors.ElementError("Element does not exist")
-
-    def _exist(self):
-        '''Checks if entity already exist
-
-        :return: bool (True if exist, False if not exist)
-        '''
-        element_exist = False
-        elements_xml = eval(self.type_c)(None, self.parents)._read()
-        for element_xml in list(elements_xml):
-            if element_xml.get('name') == self.name:
-                log.debug(self.dump(element_xml))
-                element_exist = True
-                break
-        log.info("Checked if {}({}) already exist and this is {}".format(self.type, self.name, element_exist))
-        return element_exist
-
-    def _is_update_needed(self, fdict):
-        '''Checks if update of entity is needed
-
-        :param dict fdict: dictionary of fields for the existing entity
-        :return: bool (True if needed, False if not needed), xml of current entity, xml of desired entity
-        '''
-        current_xml = self.read()
-        desired_element = eval(self.type)(self.name, self.parents)
-        desired_element.xml = deepcopy(current_xml)
-        desired_xml, is_update_needed = desired_element._update_xml_with_kwargs(desired_element.xml, fdict)
-        log.info('Checked if update is needed for {0}({1}) and this is {2}'.format(self.type, self.name, str(is_update_needed)))
-        return is_update_needed, current_xml, desired_xml
-
-    def read(self):
-        '''Reads entity
-
-        :return: xml of the entity
-        '''
-        log_info = [self.type, self.name]
-        log.info("Read {}({})".format(*log_info))
-        return self._read()
-
-    def delete(self):
-        '''Deletes entity
-
-        :return: bool (True if successfully)
-        '''
-        return self._delete()
-
-    def exist(self):
-        '''Checks if entity already exist
-
-        :return: bool (True if exist, False if not exist)
-        '''
-        return self._exist()
-
     def dump(self, xml=None):
-        '''Pretty print an etree as string
+        '''Pretty print an :class:`lxml.etree.Element` or :class:`lxml.objectify.ObjectifiedElement` as string
         
-        :param lxml.etree.Element xml: xml to be pretty printed, if not given self.xml is used
-        :return: string with pretty printed xml
+        :param lxml.etree.Element xml: Element to pretty print
+        :param lxml.objectify.ObjectifiedElement xml: ObjectifiedElement to pretty print
+        :return: string
         '''
         if xml is None:
-            return etree.tostring(self.xml, encoding='UTF-8', xml_declaration=True, pretty_print=True)
-        else:
-            return etree.tostring(xml, encoding='UTF-8', xml_declaration=True, pretty_print=True)
+            xml = self.xml
+        
+        copy = deepcopy(xml)
+        if type(copy) == ObjectifiedElement:
+            copy = self.convert_xml_obj_to_xml_element(copy)
+        copy = self.strip_ns_prefix(copy)
+        
+        return etree.tostring(copy, encoding='UTF-8', xml_declaration=True, 
+                              pretty_print=True)
 
     def is_valide_xml(self, xml=None):
-        '''Validates a xml against the appNGizer xsd schema
+        '''Validate :class:`lxml.etree.Element` against the appNGizer xsd schema
 
-        :param lxml.etree.Element xml: xml to be validated, if not given self.xml attribute is used
-        :return: bool (True if validates)
+        :param lxml.etree.Element xml: Element to be validated, if not self.xml is used
+        :return: bool
         '''
         doc = file(self.XSD_APPNGIZER_PATH, 'r')
         xsd_schema_doc = etree.parse(doc)
         xsd_schema = etree.XMLSchema(xsd_schema_doc)
         if xml is None:
-            xml = self.xml
+            xml = self.convert_xml_obj_to_xml_element()
+
         try:
             xsd_schema.assertValid(xml)
             is_valide_xml = True
         except etree.DocumentInvalid as e:
+            logging.warn(e)
             is_valide_xml = False
         except:
             raise
         return is_valide_xml
 
 
+
+class Element(XMLElement):
+    '''
+        Abstract class of an appNG entity
+    '''
+    def __init__(self, name='', parents=[]):
+        '''
+        :param str name: Name of entity
+        :param list parents: List of :class:`Element` objects which are parents of the entity
+        '''
+        self.name = name
+        self.parents = parents
+        self.url = self.get_url_dict()
+        self.xml = self._get_xml_template()
+        self.loaded = False
+        self.modified = False
+
+    def get_url_dict(self):
+        '''Return dictionary with url path components of the entity
+        
+           url['self'] url path to entity
+           url['ancestor'] url path to entity type
+           url['parents'] url path of parent entities
+        
+        :return: dict
+        '''
+        return self._get_url_dict()
+    def _get_url_dict(self):
+        '''Return dictionary with url path components of the entity
+        
+           url['self'] url path to entity
+           url['ancestor'] url path to entity type
+           url['parents'] url path of parent entities
+        
+        :return: dict
+        '''
+        url = {'self': '', 'ancestor': '', 'parents': '', 'type': self.TYPE.lower()}
+
+        # url['parents']
+        if hasattr(self, 'parents'):
+            for parent in self.parents:
+                url['parents'] = ''.join([ url['parents'], parent.url['self'] ])
+        # url['ancestor']
+        url['ancestor'] = '/'.join([url['parents'], url['type']])
+        # url['self']
+        if self.name == None:
+            url['self'] = url['ancestor']
+        else:
+            url['self'] = '/'.join([url['ancestor'], self.name])
+        return url
+
+    def load(self):
+        '''Load entity via GET and set self.xml from requests.Response.content
+        :return: None
+        '''
+        if len(self.parents) > 0:
+            parent_types = ' '.join( [p.TYPE for p in self.parents] )
+            log.debug("Load {} {}({})".format(parent_types, self.__class__.__name__, self.name))
+        else:
+            log.debug("Load {}({})".format(self.__class__.__name__, self.name))
+        self._load()
+    def _load(self):
+        '''Load entity via GET and set self.xml from requests.Response.content
+        :return: None
+        '''
+        request = XMLClient().request('GET', self.url['self'])
+        self._set_xml(request.response)
+        self.loaded = True
+        self.modified = False
+
+    def load_if_needed(self):
+        '''Load entity only if it's not already loaded and not modified by any methods
+        :return: None
+        '''
+        self._load_if_needed()
+    def _load_if_needed(self):
+        '''Load entity only if it's not already loaded and not modified by any methods
+        :return: None
+        '''
+        if self.loaded:
+            if self.modified:
+                self.load()
+        else:
+            self.load() 
+    
+    def _create(self, xdict):
+        '''Create entity from a given dict
+
+        :param dict xdict: dictionary of fields and attributes to be set for the new entity
+        :return: lxml.etree.Element
+        '''
+        if len(self.parents) > 0:
+            parent_types = ' '.join( [p.TYPE for p in self.parents] )
+            log.debug("Create {} {}({})".format(parent_types, self.__class__.__name__, self.name))
+        else:
+            log.debug("Create {}({})".format(self.__class__.__name__, self.name))
+        self._set_xml(xdict)
+        if self.is_valide_xml():
+            request = XMLClient().request('POST', self.url['ancestor'], self.get_xml_str())
+            self._set_xml(request.response)
+            self.modified = True
+            return self.convert_xml_obj_to_xml_element()
+        else:
+            raise appngizer.errors.ElementError("Current XML for {0}({1}) does not validate: {2}".format(self.__class__.__name__, self.name, self.dump()))
+
+    def read(self):
+        '''Read entity and return as lxml.etree.Element
+        :return: lxml.etree.Element
+        '''
+        log.debug("Read {}({})".format(self.__class__.__name__, self.name))
+        self.load_if_needed()
+        return self.convert_xml_obj_to_xml_element()
+
+    def _update(self, xdict):
+        '''Update entity from a given dict
+
+        :param dict xdict: dictionary of fields and attributes to be set for the updated entity
+        :return: lxml.etree.Element
+        '''
+        if len(self.parents) > 0:
+            parent_types = ' '.join( [p.TYPE for p in self.parents] )
+            log.debug("Update {} {}({})".format(parent_types, self.__class__.__name__, self.name))
+        else:
+            log.debug("Update {}({})".format(self.__class__.__name__, self.name))
+        self.load_if_needed()
+        self._set_xml(xdict)
+        if self.is_valide_xml( self.convert_xml_obj_to_xml_element() ):
+            request = XMLClient().request('PUT', self.url['self'], self.get_xml_str())
+            self._set_xml(request.response)
+            return self.convert_xml_obj_to_xml_element()
+        else:
+            raise appngizer.errors.ElementError("Current XML for {}({}) does not validate: {}".format(self.__class__.__name__, self.name, self.dump()))
+
+    def delete(self):
+        '''Delete entity
+
+        :return: bool (True if successfully)
+        '''
+        if len(self.parents) > 0:
+            parent_types = ' '.join( [p.TYPE for p in self.parents] )
+            log.debug("Delete {} {}({})".format(parent_types, self.__class__.__name__, self.name))
+        else:
+            log.debug("Delete {}({})".format(self.__class__.__name__, self.name))
+        return self._delete()
+    def _delete(self):
+        '''Delete entity
+
+        :return: bool (True if was successfully)
+        '''
+        if self.exist():
+            XMLClient().request('DELETE', self.url['self'])
+            self.modified = False
+            return True
+        else:
+            raise appngizer.errors.ElementError("Element does not exist")
+
+    def exist(self):
+        '''Check if entity already exist
+
+        :return: bool (True if exist, False if not exist)
+        '''
+        return self._exist()
+    def _exist(self):
+        '''Check if entity already exist
+
+        :return: bool (True if exist, False if not exist)
+        '''
+        try:
+            self.load()
+            return True
+        except:
+            return False
+        
+    def _is_update_needed(self, xdict):
+        '''Check if update of entity is needed
+        
+        :param dict xdict: dictionary of fields and attributes to be set for the updated entity
+        :return: bool (True if needed, False if not needed), lxml.etree.Element of current entity, lxml.etree.Element of updated entity
+        '''
+        self.load_if_needed()
+        
+        result = False
+        new_obj = deepcopy(self)
+        new_obj._set_xml(xdict)
+        
+        for field in self.FIELDS.iterkeys():
+            if self.xml[field] != new_obj.xml[field]:
+                result = True
+
+        if len(self.parents) > 0:
+            parent_types = ' '.join( [p.TYPE for p in self.parents] )
+            log.debug("Update needed for {} {}({}) is {}".format(parent_types, self.__class__.__name__, self.name, str(result)))
+        else:
+            log.debug("Update needed for {}({}) is {}".format(self.__class__.__name__, self.name, str(result)))
+
+        return result, self.xml, new_obj.xml
+
+
+
 class Site(Element):
     '''
-        Class to manage a site of an appNG instance
+        Class to manage a site
     '''
+    FIELDS = OrderedDict()
+    FIELDS['host'] = ''
+    FIELDS['domain'] = ''
+    FIELDS['description'] = ''
+    FIELDS['active'] = True
+    FIELDS['createRepositoryPath'] = False
+    ATTRIBUTES = OrderedDict()
+    ATTRIBUTES['name'] = ''
     
-    ALLOWED_FIELDS = ['host', 'domain', 'description', 'active', 'createRepositoryPath']
+    PRESERVED_FIELDS = ['description','domain']
+
     TYPE = 'Site'
     TYPE_C = 'Sites'
 
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.site(
-            Element.host(),
-            Element.domain(),
-            Element.description(),
-            Element.active('false'),
-            Element.createRepositoryPath('false'),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
+    def create(self, **xdict):
+        '''Create site
 
-    def create(self, host, domain, description=None, active=True, createRepositoryPath=True):
-        '''Creates a new site
-
-        :param str host: host header
-        :param str domain: primary domain with protocol
-        :param str description: short description
-        :param bool active: activate site
-        :param bool createRepositoryPath: create site directory in repository
-        :return: xml of created site
+        :param str xdict['host']*: Hostname of site 
+        :param str xdict['domain']*: Main URI of site 
+        :param str xdict['description']: Short description of site 
+        :param bool xdict['active']: Activate site
+        :param bool xdict['createRepositoryPath']: Create site repository directory         
+        :return: lxml.etree.Element
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
-        return self._create(fdict)
+        return self._create(xdict)
 
-    def update(self, host, domain, description=None, active=True, createRepositoryPath=True):
-        '''Updates an existing site
+    def update(self, **xdict):
+        '''Update site
 
-        :param str host: host header
-        :param str domain: primary domain with protocol
-        :param str description: short description
-        :param bool active: activate site
-        :param bool createRepositoryPath: create site directory in repository
-        :return: xml of updated site
+        :param str xdict['host']: Hostname of site 
+        :param str xdict['domain']: Main URI of site 
+        :param str xdict['description']: Short description of site 
+        :param bool xdict['active']: Activate site
+        :param bool xdict['createRepositoryPath']: Create site repository directory         
+        :return: lxml.etree.Element
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
-        return self._update(fdict)
+        return self._update(xdict)
 
-    def is_update_needed(self, host, domain, description=None, active=True, createRepositoryPath=True):
-        '''Checks if update of site is needed
-
-        :param str host: host header
-        :param str domain: primary domain with protocol
-        :param str description: short description
-        :param bool active: activate site
-        :param bool createRepositoryPath: create site directory in repository
-        :return: bool (True if needed, False if not needed), xml of current site, xml of desired site
+    def is_update_needed(self, **xdict):
+        '''Check if update of site is needed
+        
+        :param str xdict['host']: Hostname of site 
+        :param str xdict['domain']: Main URI of site 
+        :param str xdict['description']: Short description of site 
+        :param bool xdict['active']: Activate site
+        :param bool xdict['createRepositoryPath']: Create site repository directory         
+        :return: bool (True if needed, False if not needed), lxml.etree.Element of current site, lxml.etree.Element of updated site
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
-        return self._is_update_needed(fdict)
+        return self._is_update_needed(xdict)  
 
     def reload(self):
-        '''Reloads a site
+        '''Reload site
 
         :return: bool (True if reloaded, False if not reloaded)
         '''
-        if self.exist():
-            if XMLClient().request('PUT', self.url['self'] + '/reload'):
-                return True
-            else:
-                return False
+        if XMLClient().request('PUT', self.url['self'] + '/reload'):
+            return True
         else:
             return False
 
 
-class Grant(Element):
-    '''
-        Class to manage application access for a site
-    '''
-    
-    TYPE = 'Grant'
-    TYPE_C = 'Grants'
-    
-    def __init__(self, name='', parents=None, xml=None):
-        # : Grant entity does not have a name attribute, we set it to an empty string
-        self.name = ''
-        self.type = self.TYPE
-        self.type_c = self.TYPE_C
-        self.parents = self._set_parents(parents)
-        self.url = self._set_url()
-        self.xml = self._set_xml(xml)
-        
-    def _set_url(self):
-        '''Returns dictionary with various url paths of the entity
-
-        :return: dict of url paths (f.e. self url, parent url)
-        '''
-        url = {'self':None, 'parent':None}
-        parents_url = ''
-        for parent in self.parents:
-            parents_url = '/'.join([parents_url, parent.url['self']])
-        url['parent'] = '/'.join([parents_url])
-        url['self'] = '/'.join([url['parent'], self.type_c.lower()])
-        return url
-
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.grant(
-            site=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
-
-    def _read(self,site):
-        '''Reads grant for a site
-        
-        :param str site: name of site
-        :return: xml of grant
-        '''
-        request = XMLClient().request('GET', self.url['self'])
-        response_xml = request.response_transf
-        grant_xml = None
-
-        for grant_grants_xml in list(response_xml):
-            if str(grant_grants_xml.xpath("@site", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0]) == site:
-                grant_xml = grant_grants_xml
-                break
-
-        if grant_xml is not None:
-            log.info("Read {0}({1})".format(self.type, site))
-            # We must return a copy here otherwise root element is still packages
-            return deepcopy(grant_xml)
-        else:
-            raise appngizer.errors.ElementError("Seems that site ({}) does not exist".format(site))
-        
-    def read(self,site):
-        '''Reads grant for a site
-
-        :return: xml of the entity
-        '''
-        log_info = [self.type, site]
-        log.info("Read {}({})".format(*log_info))
-        return self._read(site)
-
 
 class Repository(Element):
     '''
-        Class to manage repositories of an appNG instance
+        Class to manage a repository
     '''
+    FIELDS = OrderedDict()
+    FIELDS['description'] = ''
+    FIELDS['remoteName'] = None
+    FIELDS['uri'] = None
+    FIELDS['enabled'] = True
+    FIELDS['strict'] = False
+    FIELDS['published'] = False
+    FIELDS['mode'] = 'ALL'
+    FIELDS['type'] = 'LOCAL'
+    FIELDS['packages'] = None
+    ATTRIBUTES = {'name': ''}
     
-    ALLOWED_FIELDS = ['description', 'remoteName', 'uri', 'enabled', 'strict', 'published', 'mode', 'type']
+    PRESERVED_FIELDS = ['description']
+    
     TYPE = 'Repository'
     TYPE_C = 'Repositories'
 
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.repository(
-            Element.description(),
-            Element.remoteName(),
-            Element.uri('file:/'),
-            Element.enabled('false'),
-            Element.strict('false'),
-            Element.published('false'),
-            Element.mode('LOCAL'),
-            Element.type('ALL'),
-            Element.packages(),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
+    def create(self, **xdict):
+        '''Create repository
 
-    def create(self, uri, type='LOCAL', remoteName=None, mode='ALL', enabled=True, strict=False, published=False, description=None):
-        '''Creates a new repository
-
-        :param str uri: uri to the packages (file:// or http|s://)
-        :param str type: type of repository (LOCAL = local repository, REMOTE = remote repository)
-        :param str remoteName: name of remote repository
-        :param str mode: mode of repository (ALL = all packages, STABLE = only stable packages, SNAPSHOT = only snapshot packages)
-        :param bool enabled: enable repository
-        :param bool strict: use strict mode
-        :param bool published: publish repository
-        :param str description: short description
-        :return: xml of created repository
+        :param str xdict['description']: Short description of repository
+        :param str xdict['remoteName']: Remote name of a remote repository
+        :param str xdict['uri']*: URI to repository
+        :param bool xdict['enabled']: Enable repository
+        :param bool xdict['strict']: Use strict mode for repository
+        :param bool xdict['published']: Publish this repository as remote repository
+        :param str xdict['mode']: Type of packages to serve (ALL|STABLE|SNAPSHOT) 
+        :param str xdict['type']: Type of repository (LOCAL|REMOTE) 
+        :return: lxml.etree.Element
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
-        return self._create(fdict)
+        return self._create(xdict)
 
-    def update(self, uri, type='LOCAL', remoteName=None, mode='ALL', enabled=True, strict=False, published=False, description=None):
-        '''Updates a repository
+    def update(self, **xdict):
+        '''Update repository
 
-        :param str uri: uri to the packages (file:// or http|s://)
-        :param str type: type of repository (LOCAL = local repository, REMOTE = remote repository)
-        :param str remoteName: name of remote repository
-        :param str mode: mode of repository (ALL = all packages, STABLE = only stable packages, SNAPSHOT = only snapshot packages)
-        :param bool enabled: enable repository
-        :param bool strict: use strict mode
-        :param bool published: publish repository
-        :param str description: short description
-        :return: xml of updated repository
+        :param str xdict['description']: Short description of repository
+        :param str xdict['remoteName']: Remote name of a remote repository
+        :param str xdict['uri']: URI to repository
+        :param bool xdict['enabled']: Enable repository
+        :param bool xdict['strict']: Use strict mode for repository
+        :param bool xdict['published']: Publish this repository as remote repository
+        :param str xdict['mode']: Type of packages to serve (ALL|STABLE|SNAPSHOT) 
+        :param str xdict['type']: Type of repository (LOCAL|REMOTE) 
+        :return: lxml.etree.Element
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
-        return self._update(fdict)
+        return self._update(xdict)
 
-    def is_update_needed(self, uri, type='LOCAL', remoteName=None, mode='ALL', enabled=True, strict=False, published=False, description=None):
-        '''Checks if update of repository is needed
+    def is_update_needed(self, **xdict):
+        '''Check if update of repository is needed
 
-        :param str uri: uri to the packages (file:// or http|s://)
-        :param str type: type of repository (LOCAL = local repository, REMOTE = remote repository)
-        :param str remoteName: name of remote repository
-        :param str mode: mode of repository (ALL = all packages, STABLE = only stable packages, SNAPSHOT = only snapshot packages)
-        :param bool enabled: enable repository
-        :param bool strict: use strict mode
-        :param bool published: publish repository
-        :param str description: short description
-        :return: bool (True if needed, False if not needed), xml of current repository, xml of desired repository
+        :param str xdict['description']: Short description of repository
+        :param str xdict['remoteName']: Remote name of a remote repository
+        :param str xdict['uri']: URI to repository
+        :param bool xdict['enabled']: Enable repository
+        :param bool xdict['strict']: Use strict mode for repository
+        :param bool xdict['published']: Publish this repository as remote repository
+        :param str xdict['mode']: Type of packages to serve (ALL|STABLE|SNAPSHOT) 
+        :param str xdict['type']: Type of repository (LOCAL|REMOTE) 
+        :return: bool (True if needed, False if not needed), lxml.etree.Element of current repository, lxml.etree.Element of updated repository
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
-        return self._is_update_needed(fdict)
+        return self._is_update_needed(xdict)  
+
+    def has_pkg(self, **xdict):
+        '''Check if repository have a package 
+        
+        :param str xdict['name']*: name of package
+        :return: bool
+        '''
+        pkg_name = xdict['name']
+        has_pkg = False
+        try:
+            pkg_url = '/'.join([ self.url['self'],pkg_name ])
+            request = XMLClient().request('GET', pkg_url)
+            has_pkg = True
+        except:
+            has_pkg = False
+        log.debug("Package({}) in Repository({}) available is {}".format(pkg_name, self.name, str(has_pkg)))
+        return has_pkg
+    
+    def list_pkg(self, **xdict):
+        '''Get a list of all variants of a package in the repository
+        
+        :param str xdict['name']*: name of package
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        pkg_name = xdict['name']
+        log.debug("Read Package({})".format(pkg_name))
+        pkg_url = '/'.join([ self.url['self'],pkg_name ])
+        try:
+            request = XMLClient().request('GET', pkg_url)
+        # APPNG-2071 we should catch only if HTTP 404
+        except:
+            return None
+        return objectify.fromstring(request.response.content)
+    
+    def list_pkgs(self):
+        '''Get a list of all packages in the repository 
+        
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        self.load_if_needed()
+        return self.xml.packages
+
 
 
 class Property(Element):
     '''
-        Class to manage properties of an appNG instance
+        Class to manage a property
     '''
     
-    ALLOWED_FIELDS = ['value', 'defaultValue', 'description']
-    ALLOWED_ATTRIBUTES = ['clob']
+    FIELDS = OrderedDict()
+    FIELDS['value'] = ''
+    FIELDS['defaultValue'] = ''
+    FIELDS['description'] = ''
+    ATTRIBUTES = {'name': '', 'clob': False}
+    
     PRESERVED_FIELDS = ['description', 'defaultValue']
+    
     TYPE = 'Property'
     TYPE_C = 'Properties'
 
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.property(
-            Element.value(),
-            Element.defaultValue(),
-            Element.description(),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
+    def create(self, **xdict):
+        '''Create property
 
-    def create(self, value, defaultValue=None, description=None, clob=False):
-        '''Creates a new property
-
-        :param str value: value of property
-        :param str defaultValue: default value of property
-        :param str description: short description
-        :param bool clob: treat property value as clob
-        :return: xml of created property
+        :param str xdict['value']: Value of property 
+        :param str xdict['defaultValue']: Default value of property 
+        :param str xdict['description']: Short description of property 
+        :param bool xdict['clob']: Threat value as clob
+        :return: lxml.etree.Element
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS + self.ALLOWED_ATTRIBUTES)])
-        if clob:
-            self.ALLOWED_CDATA_FIELDS = ['value', 'defaultValue']
-        return self._create(fdict)
+        if xdict.get('clob', False):
+            self.CDATA_FIELDS = ['value', 'defaultValue']
+        return self._create(xdict)
 
-    def update(self, value, defaultValue=None, description=None, clob=False):
-        '''Updates a new property
+    def update(self, **xdict):
+        '''Update property
 
-        :param str value: value of property
-        :param str defaultValue: default value of property
-        :param str description: short description
-        :param bool clob: treat property value as clob
-        :return: xml of updated property
+        :param str xdict['value']: Value of property 
+        :param str xdict['defaultValue']: Default value of property 
+        :param str xdict['description']: Short description of property 
+        :param bool xdict['clob']: Threat value as clob
+        :return: lxml.etree.Element
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS + self.ALLOWED_ATTRIBUTES)])
-        if clob:
-            self.ALLOWED_CDATA_FIELDS = ['value', 'defaultValue']
-        return self._update(fdict)
+        if xdict.get('clob', False):
+            self.CDATA_FIELDS = ['value', 'defaultValue']
+        return self._update(xdict)
 
-    def is_update_needed(self, value, defaultValue=None, description=None, clob=None):
-        '''Checks if update of property is needed
+    def is_update_needed(self, **xdict):
+        '''Check if update of property is needed
 
-        :param str value: value of property
-        :param str defaultValue: default value of property
-        :param str description: short description
-        :param bool clob: treat property value as clob
-        :return: bool (True if needed, False if not needed), xml of current property, xml of desired property
+        :param str xdict['value']: Value of property 
+        :param str xdict['defaultValue']: Default value of property 
+        :param str xdict['description']: Short description of property 
+        :param bool xdict['clob']: Threat value as clob
+        :return: (bool (True if needed, False if not needed), lxml.etree.Element of current property, lxml.etree.Element of desired property)
         '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS + self.ALLOWED_ATTRIBUTES)])
-        if clob:
-            self.ALLOWED_CDATA_FIELDS = ['value', 'defaultValue']
-        return self._is_update_needed(fdict)
+        if xdict.get('clob', False):
+            self.CDATA_FIELDS = ['value', 'defaultValue']
+        return self._is_update_needed(xdict)
+
 
 
 class Application(Element):
     '''
-        Class to manage applications of an appNG instance
+        Class to manage an application
     '''
+
+    FIELDS = OrderedDict()
+    FIELDS['displayName'] = ''
+    FIELDS['privileged'] = False
+    FIELDS['fileBased'] = False
+    FIELDS['hidden'] = False
+    FIELDS['version'] = ''
+    ATTRIBUTES = {'name': ''}
     
-    ALLOWED_FIELDS = ['displayName', 'core', 'fileBased', 'hidden', 'version']
     TYPE = 'Application'
     TYPE_C = 'Applications'
 
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.application(
-            Element.displayName(),
-            Element.core('false'),
-            Element.fileBased('false'),
-            Element.hidden('false'),
-            Element.version(),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
+    def update(self, **xdict):
+        '''Update application settings
 
-    def read(self, site=None):
-        '''Reads application from platform or if given from an assigned site
-
-        :return: xml of application
+        :param str xdict['displayName']: Name of application to display
+        :param bool xdict['privileged']: Give privileged rights for application
+        :param bool xdict['fileBased']: Store application in filesystem instead of database
+        :param bool xdict['hidden']: Hide application in backend
+        :return: lxml.etree.Element
         '''
-        if site and type(site) is Site:
-            read_url = '/'.join([site.url['self'], self.url['self']])
-        else:
-            read_url = self.url['self']
-        request = XMLClient().request('GET', read_url)
-        response_xml = request.response_transf
-        return response_xml
+        return self._update(xdict)
 
-    def update(self, hidden=False, core=False, fileBased=False, displayName=None):
-        '''Updates an application
+    def is_update_needed(self, **xdict):
+        '''Check if update of application settings is needed
 
-        :param bool hidden: hide application
-        :param bool core: run as core application
-        :param bool fileBased: store application filebased, otherwise databased
-        :param str displayName: display name of application
-        :return: xml of updated application
+        :param str xdict['displayName']: Name of application to display
+        :param bool xdict['privileged']: Give privileged rights for application
+        :param bool xdict['fileBased']: Store application in filesystem instead of database
+        :param bool xdict['hidden']: Hide application in backend
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
-
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        return self._update(fdict)
-
+        return self._is_update_needed(xdict)  
+            
     def delete(self):
         '''Deletes an application
         
@@ -838,1185 +816,968 @@ class Application(Element):
             
         :return: bool (True if deleted)
         '''
-        
-        if self.exist():
-            sites = Sites()
-            sites_assigned = []
-            is_assigned = False
-            for site in sites.elements:
-                if self.is_assigned(site):
-                    is_assigned = True
-                    sites_assigned.append(site)
-            if is_assigned:
-                raise appngizer.errors.ElementError("Delete {0}({1}) aborted, deassign from site/s({2}) first".format(self.type, self.name, ', '.join(sites_assigned)))
-            XMLClient().request('DELETE', self.url['self'])
-            return True
-        else:
-            log.error("Delete {0}({1}) failed, application does not exist".format(self.type, self.name))
-            raise appngizer.errors.ElementError("Delete {0}({1}) failed, application does not exist")
-
-    def is_update_needed(self, hidden=False, core=False, fileBased=False, displayName=None):
-        '''Checks if update of application is needed
-
-        :param bool hidden: hide application
-        :param bool core: run as core application
-        :param bool fileBased: store application filebased, otherwise databased
-        :param str displayName: display name of application
-        :return: bool (True if needed, False if not needed), xml of current application, xml of desired application
-        '''
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        return self._is_update_needed(fdict)
-
-    def is_assigned(self, site=None):
-        '''Checks if application is already assigned to a site
-
-        :param elements.Site site: site object
-        :return: bool (True if assigned, False if not assigned)
-        '''
-        if site is not None:
-            is_assigned = False
-            try:
-                self.read(site)
+        sites = Sites()
+        sites_assigned = []
+        is_assigned = False
+        for site in sites.site:
+            site_obj = Site(site.name)._set_xml(self.convert_xml_obj_to_xml_element(site))
+            site_app = Application(self.name)
+            
+            if site_app.is_assigned( site=site_obj ):
                 is_assigned = True
-            except appngizer.errors.HttpElementNotFound:
-                pass
-            except:
-                raise
-            log.info("Checked if {0}({1}) already assigned on site {2} and this is {3}".format(self.type, self.name, site.name, is_assigned))
-        else:
-            is_assigned = False
-            for site in Sites().elements:
-                try:
-                    self.read(site)
-                    is_assigned = True
-                except appngizer.errors.HttpElementNotFound:
-                    pass
-                except:
-                    raise
-                log.info("Checked if {0}({1}) already assigned on site {2} and this is {3}".format(self.type, self.name, site.name, is_assigned))
+                sites_assigned.append(site.name)
+            if is_assigned:
+                raise appngizer.errors.ElementError("Delete {0}({1}) aborted, deassign from site/s({2}) first".format(self.__class__.__name__, self.name, ', '.join(sites_assigned)))
+            XMLClient().request('DELETE', self.url['self'])
+            self.modified = False
+            return True
+
+    def is_assigned(self, site):
+        '''Checks if application is assigned to a site
+
+        :return: bool (True if is assigned)
+        '''
+        is_assigned = False
+        if type(site) != Site:
+            raise appngizer.errors.ElementError("Can't check if {0}({1}) is assigned to a site because site is not a Site object".format(self.__class__.__name__, self.name))
+
+        try:
+            url = site.url['self'] + self.url['self']
+            request = XMLClient().request('GET', url)
+            self._set_xml(request.response)
+            is_assigned = True
+        except appngizer.errors.HttpElementNotFound:
+            pass
+        except:
+            raise
+        log.debug("{0}({1}) assigned on site {2} is {3}".format(self.__class__.__name__, self.name, site.name, is_assigned))
         return is_assigned
 
     def assign(self, site):
         '''Assigns application to a site
 
-        :param elements.Site site: site object
-        :return: xml of assigned application
+        :return: bool (True if assigned)
         '''
+        if type(site) != Site:
+            raise appngizer.errors.ElementError("Can't assign {0}({1}) to site because site is not a Site object".format(self.__class__.__name__, self.name))
 
-        if self.exist():
-            if site.exist():
-                if not self.is_assigned(site):
-                    log.info('Assign {0}({1}) to site {2}'.format(self.type, self.name, site.name))
-                    self.xml = self.read()
-                    request = XMLClient().request('POST', '/'.join([site.url['self'], self.url['self']]), str(self))
-                    response_xml = request.response_transf
-                    return response_xml
-                else:
-                    log.error('Assign {0}({1}) to site {2} failed, application already assigned'.format(self.type, self.name, site.name))
-                    raise appngizer.errors.ElementError("Assign {0}({1}) to site {2} failed, application already assigned".format(self.type, self.name, site.name))
-            else:
-                log.error('Assign {0}({1}) to site {2} failed, site does not exist'.format(self.type, self.name, site.name))
-                raise appngizer.errors.ElementError("Assign {0}({1}) to site {2} failed, site does not exist".format(self.type, self.name, site.name))
-        else:
-            log.error('Assign {0}({1}) to site {2} failed, application is not installed'.format(self.type, self.name, site.name))
-            raise appngizer.errors.ElementError("Assign {0}({1}) to site {2} failed, application is not installed".format(self.type, self.name, site.name))
-    def assign_by_name(self, site_name):
-        '''Assigns application to a site via site_name
-
-        :param elements.Site site_name: str
-        :return: xml of assigned application
-        '''
-        site = Site(site_name)
-        return self.assign(site)
+        self.load_if_needed()
+        log.debug('Assign {}({}) to site {}'.format(self.__class__.__name__,self.name, site.name))
+        
+        url = site.url['self'] + self.url['self']
+        
+        request = XMLClient().request('POST', url, self.get_xml_str())
+        self.modified = False
+        return True
 
     def deassign(self, site):
         '''Deassigns application from a site
 
-        :param elements.Site site: site object
-        :return: xml of deassigned application
+        :return: bool (True if deassigned)
         '''
-        if self.exist():
-            if site.exist():
-                if self.is_assigned(site):
-                    log.info('Deassign {0}({1}) to site {2}'.format(self.type, self.name, site.name))
-                    self.xml = self.read(site)
-                    request = XMLClient().request('DELETE', '/'.join([site.url['self'], self.url['self']]), str(self))
-                    response_xml = request.response_transf
-                    return response_xml
-                else:
-                    log.error('Deassign {0}({1}) to site {2} failed, application is not assigned to site'.format(self.type, self.name, site.name))
-                    raise appngizer.errors.ElementError("Deassign {0}({1}) to site {2} failed, application is not assigned to site".format(self.type, self.name, site.name))
-            else:
-                log.error('Deassign {0}({1}) to site {2} failed, site does not exist'.format(self.type, self.name, site.name))
-                raise appngizer.errors.ElementError("Deassign {0}({1}) to site {2} failed, site does not exist".format(self.type, self.name, site.name))
-        else:
-            log.error('Deassign {0}({1}) to site {2} failed, application is not installed'.format(self.type, self.name, site.name))
-            raise appngizer.errors.ElementError("Deassign {0}({1}) to site {2} failed, application is not installed".format(self.type, self.name, site.name))
-    def deassign_by_name(self, site_name):
-        '''Deassigns application from a site via site_name
+        if type(site) != Site:
+            raise appngizer.errors.ElementError("Can't deassign {0}({1}) from a site because site is not a Site object".format(self.__class__.__name__, self.name))
 
-        :param elements.Site site_name: str
-        :return: xml of deassigned application
-        '''
-        site = Site(site_name)
-        return self.deassign(site)
+        log.debug('Deassign {0}({1}) to site {2}'.format(self.__class__.__name__,self.name, site.name))
+
+        url = site.url['self'] + self.url['self']
+        
+        request = XMLClient().request('DELETE', url, self.get_xml_str())
+        self.modified = False
+        return True
 
     def deassign_from_all(self):
         '''Deassigns application from all sites
 
         :return: bool (True if deassigned)
         '''
-        if self.exist():
-            sites = Sites()
-            for site in sites.elements:
-                if self.is_assigned(site):
-                    self.deassign(site)
-            return True
-        else:
-            msg = 'Deassign {}({}) from all sites failed, application is not installed'.format(self.type, self.name)
-            log.error(msg)
-            raise appngizer.errors.ElementError(msg)
+        sites = Sites()
+        sites.load()
+        for site in sites.xml.site:
+            site_obj = Site(site.get('name'))
+            site_obj._set_xml(site)
+            site_app = Application(self.name, parents=[site_obj])
+            
+            if site_app.is_assigned(site_obj):
+                site_app.deassign(site_obj)
+        return True
         
+
 
 class Package(Element):
     '''
-        Class to manage packages of an appNG instance
+        Class to manage a package
     '''
+    FIELDS = OrderedDict()
+    FIELDS['displayName'] = ''
+    FIELDS['version'] = ''
+    FIELDS['timestamp'] = ''
+    FIELDS['installed'] = False
+    FIELDS['type'] = 'APPLICATION'
+    ATTRIBUTES = {'name': ''}
     
-    ALLOWED_FIELDS = ['displayName', 'version', 'timestamp', 'release', 'snapshot', 'installed', 'type']
     TYPE = 'Package'
     TYPE_C = 'Packages'
-
-    def _get_xml_template(self):
-        E = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = E.package(
-            E.displayName(),
-            E.version(),
-            E.timestamp(),
-            E.release(),
-            E.snapshot(),
-            E.installed('false'),
-            E.type(),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
-
-    def _set_url(self):
-        '''Returns dictionary with various url paths of the entity
+    
+    def __init__(self, name=None, parents=[]):
+        '''Initialising of package object
         
-        For a package there is no entity type path component
-
-        :return: dict of url paths (f.e. self url, parent url)
+        :param str name: Name of entity
+        :param list parents: List of :class:`Element` objects which are parents of the current entity
         '''
-        url = {'self':None, 'parent':None}
-        parents_url = ''
-        for parent in self.parents:
-            parents_url = '/'.join([parents_url, parent.url['self']])
-        url['parent'] = '/'.join([parents_url])
-        url['self'] = '/'.join([url['parent'], self.name])
-        return url
-
-    def exist(self, version, timestamp=None):
-        '''Checks if package exist
-
-        :param str version: version of package
-        :param str timestamp: timestamp of package
-        :return: bool (True if exist, False if not exist)
+        self.name = name
+        self.parents = parents
+        self.xml = self._get_xml_template()
+        self.loaded = False
+        self.modified = False
+        
+    def exist(self, **xdict):
+        '''Checks if a package exist
+        
+        :param str xdict['version']: Filter for a specific version
+        :param str xdict['timestamp']: Filter for a specific timestamp
+        :return: bool (True if exist)
         '''
-        package_exist = False
-        try:
-            self.read(version, timestamp)
+        filter = {}
+        if 'version' in xdict:
+            filter['version'] = xdict['version']
+        if 'timestamp' in xdict:
+            filter['timestamp'] = xdict['timestamp']  
+        
+        find_pkg = Packages(parents=self.parents).find(name=self.name, filter=filter)
+        
+        if hasattr(find_pkg, 'package'):
             package_exist = True
-        except:
-            pass
-        log.info("Checked if {}({}) already exist and this is {}".format(self.type, self.name, package_exist))
+        else:
+            package_exist = False
         return package_exist
-
-    def read(self, version, timestamp=None):
-        '''Reads package
-        
-        :param str version: version of package
-        :param str timestamp: timestamp of package
-        :return: xml of package
-        '''
-        request = XMLClient().request('GET', self.url['self'])
-        response_xml = request.response_transf
-        package_xml = None
-
-        for package_packages_xml in list(response_xml):
-            if str(package_packages_xml.xpath("a:version/text()", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0]) == version:
-                if timestamp:
-                    if str(package_packages_xml.xpath("a:timestamp/text()", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0]) == timestamp:
-                        package_xml = package_packages_xml
-                        break
-                else:
-                    package_xml = package_packages_xml
-                    break
-        if package_xml is not None:
-            log.info("Read {0}({1})".format(self.type, self.name))
-            # We must return a copy here otherwise root element is still packages
-            return deepcopy(package_xml)
-        else:
-            raise appngizer.errors.ElementError("Package ({}) does not exist in repository ({})".format(self.name, self.parents[0].name))
-
-    def update(self, version, timestamp=None, type='APPLICATION'):
-        '''Updates an installed package
-
-        :param str version: version of package
-        :param str timestamp: timestamp of package
-        :param str type: type of package (APPLICATION|TEMPLATE)
-        :return: xml of updated package
-        '''
-        # For an update the existing XML is read and set for the current element
-        # Additional updates via kwargs
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-
-        if timestamp:
-            log_info = [self.type, self.name, version, timestamp]
-        else:
-            log_info = [self.type, self.name, version, '']
-        if self.exist(version, timestamp):
-            if self.is_installed():
-                is_update_needed = self.is_update_needed(version, timestamp)[0]
-                if is_update_needed:
-                    log.debug("Update {}({}) with version {} {}".format(*log_info))
-                    self.xml = self._update_xml_with_kwargs(self.read(version, timestamp), fdict)[0]
-                    self.is_valide_xml(self.xml)
-                    XMLClient().request('PUT', self.url['parent'] + '/install', str(self))
-                    if not self.is_installed():
-                        msg = "{}({}) failed to update version {} {}".format(*log_info)
-                        log.warn(msg)
-                        raise appngizer.errors.ElementError(msg)
-                    package_xml = self.read(version, timestamp)
-                    return package_xml
-            else:
-                msg = "{}({}) is not installed".format(*log_info)
-                log.error(msg)
-                raise appngizer.errors.ElementError(msg)
-        else:
-            msg = "{}({}) is not available in version {} {}".format(*log_info)
-            log.error(msg)
-            raise appngizer.errors.ElementError(msg)
-
-    def delete(self):
-        '''Deletes a package
-
-        :raises appngizer.errors.ElementError: delete is not avaible for packages
-        '''
-        log.error("Delete not available for {0}({1})".format(self.type, self.name))
-        raise appngizer.errors.ElementError("Delete not available for {0}({1})".format(self.type, self.name))
-
-    def is_update_needed(self, version, timestamp=None):
-        '''Checks if update of an installed package is needed
-
-        :param str version: version of package
-        :param str timestamp: timestamp of package
-        :return: bool (True if needed, False if not needed), xml of current package, xml of desired package
-        '''
-        
-        # Check against the version/timestamp field
-        if timestamp:
-            log_info = [self.type, self.name, version, timestamp]
-        else:
-            log_info = [self.type, self.name, version, '']
-        is_update_needed = False
-        current_package_xml = None
-        desired_package_xml = None
-        if self.exist(version, timestamp) and self.is_installed():
-            current_package_xml = self.read_installed()
-            current_package_version = str(current_package_xml.xpath("a:version/text()", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0])
-            current_package_timestamp = str(current_package_xml.xpath("a:timestamp/text()", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0])
-            desired_package_xml = self.read(version, timestamp)
-            desired_package_version = str(desired_package_xml.xpath("a:version/text()", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0])
-            desired_package_timestamp = str(desired_package_xml.xpath("a:timestamp/text()", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0])
-            if current_package_version != desired_package_version:
-                if timestamp:
-                    if current_package_timestamp != desired_package_timestamp:
-                        is_update_needed = True
-                else:
-                    is_update_needed = True
-        else:
-            msg = "Failed to read information for {}({}) version {} {}".format(*log_info)
-            log.error(msg)
-            raise appngizer.errors.ElementError(msg)
-        return is_update_needed, current_package_xml, desired_package_xml
-
+    
     def is_installed(self):
         '''Checks if a package is already installed
 
-        :return: bool (True if installed, False if not installed)
+        :return: bool (True if installed)
         '''
         is_installed = False
         try:
-            self.read_installed()
+            self.load_if_needed()
             is_installed = True
-        except appngizer.errors.HttpElementNotFound:
+        except appngizer.errors.ElementNotFound:
             pass
         except:
             raise
-        log.info("Checked if {}({}) already exist and this is {}".format(self.type, self.name, is_installed))
         return is_installed
 
-    def read_installed(self):
-        '''Reads package which is already installed
+    def is_update_needed(self, **xdict):
+        '''Checks if update of an installed package is needed
 
-        :return: xml of installed package
+        :param str xdict['version']: Update to a specific version
+        :param str xdict['timestamp']: Update to a specific timestamp
+        :param bool xdict['allow_snapshot']: Allow snapshot packages if no specific version is given        
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
-        request = XMLClient().request('GET', self.url['self'])
-        response_xml = request.response_transf
-        package_xml = None
-        for package_packages_xml in list(response_xml):
-            if str(package_packages_xml.xpath("a:installed/text()", namespaces=self.XPATH_DEFAULT_NAMESPACE)[0]) == 'true':
-                package_xml = package_packages_xml
-                break
-        if package_xml is not None:
-            log.info("Read {0}({1})".format(self.type, self.name))
-            return package_xml
-        else:
-            raise appngizer.errors.HttpElementNotFound("Package ({}) is not installed".format(self.name))
-
-    def install(self, version, timestamp=None, type='APPLICATION'):
-        '''Installs a package
+        is_update_needed = False
+        filter = {}
+        if 'version' in xdict:
+            filter['version'] = xdict['version']
+        if 'timestamp' in xdict:
+            filter['timestamp'] = xdict['timestamp']
+        allow_snapshot = xdict.get('allow_snapshot', False)
+        find_pkg = None
         
-        :param str version: version of package
-        :param str timestamp: timestamp of package
-        :param str type: type of package (APPLICATION|TEMPLATE)
-        :return: xml of installed package
-        '''
+        self.read()
 
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        if timestamp:
-            log_info = [self.type, self.name, version, timestamp]
+        find_pkgs = Packages(parents=self.parents).find(name=self.name, filter=filter)
+        if not hasattr(find_pkgs, 'package'):
+            raise appngizer.errors.ElementNotFound('Package {} is not available with {}'.format(self.name, filter))
+        if not allow_snapshot:
+            for pkg in find_pkgs.package:
+                if '-SNAPSHOT' not in pkg.version.text:
+                    find_pkg = pkg
+                    break
         else:
-            log_info = [self.type, self.name, version, '']
-        if self.exist(version, timestamp):
-            if not self.is_installed():
-                self.xml = self.read(version, timestamp)
-                self.xml = self._update_xml_with_kwargs(self.xml, fdict)[0]
-                self.is_valide_xml(self.xml)
-                XMLClient().request('PUT', self.url['parent'] + '/install', str(self))
-                if not self.is_installed():
-                    msg = "{}({}) failed to install version {} {}".format(*log_info)
-                    log.error(msg)
-                    raise appngizer.errors.ElementError(msg)
-                package_xml = self.read(version, timestamp)
-                log.info("Installed {}({}) with version {} {}".format(*log_info))
-                log.debug(self.dump(package_xml))
-                return package_xml
-            else:
-                msg = "{}({}) is already installed".format(*log_info)
-                log.info(msg)
-                raise appngizer.errors.ElementError(msg)
+            find_pkg = find_pkgs.package[0]
+        if find_pkg is None:
+            raise appngizer.errors.ElementNotFound('Package {} is not available with {}'.format(self.name, filter))
+
+        if self.xml.version != find_pkg.version:
+            is_update_needed = True        
+        if self.xml.timestamp != find_pkg.timestamp:
+            is_update_needed = True
+
+        delattr(find_pkg, 'repository')
+        return is_update_needed, self.convert_xml_obj_to_xml_element(self.xml), self.convert_xml_obj_to_xml_element(find_pkg)
+
+    def load(self):
+        '''Load package data from Packages object
+        :return: None
+        '''
+        log.debug("Load {0}({1})".format(self.__class__.__name__, self.name))
+        filter = { 'installed':'true' }
+        find_pkg = Packages(parents=self.parents).find(name=self.name, filter=filter)
+        if hasattr(find_pkg, 'package'):
+            self._set_xml(find_pkg.package)
         else:
-            msg = "{}({}) is not available in version {} {}".format(*log_info)
-            log.info(msg)
-            raise appngizer.errors.ElementError(msg)
+            raise appngizer.errors.ElementNotFound('Package {} is not installed'.format(self.name))
+        self.loaded = True
+
+    def install(self, **xdict):
+        '''Install a package
+
+        :param str xdict['version']: Install a specific version
+        :param str xdict['timestamp']: Install a specific timestamp
+        :param bool xdict['allow_snapshot']: Allow snapshot packages if no specific version is given         
+        :return: lxml.etree.Element
+        '''
+        filter = {}
+        if 'version' in xdict:
+            filter['version'] = xdict['version']
+        if 'timestamp' in xdict:
+            filter['timestamp'] = xdict['timestamp']
+        allow_snapshot = xdict.get('allow_snapshot', False)
+        find_pkg = None
+        
+        self._set_xml(xdict)
+        
+        find_pkgs = Packages(parents=self.parents).find(name=self.name, filter={})
+        if not hasattr(find_pkgs, 'package'):
+            raise appngizer.errors.ElementNotFound('Package {} is not available with {}'.format(self.name, filter))
+        if not allow_snapshot:
+            for pkg in find_pkgs.package:
+                if '-SNAPSHOT' not in pkg.version.text:
+                    find_pkg = pkg
+                    break
+        else:
+            find_pkg = find_pkgs.package[0]
+        if find_pkg is None:
+            raise appngizer.errors.ElementNotFound('Package {} is not available with {}'.format(self.name, filter))
+        
+        find_pkg_repo = find_pkg.repository
+        self._set_xml(find_pkg)
+        
+        log.debug('Install {}({}) in version ({})'.format(self.__class__.__name__, self.name, self.xml.version))
+        return self._install(find_pkg_repo)
+    def _install(self, repository):
+        self.xml.installed = True
+        if self.is_valide_xml():
+            install_url = '/'.join([ '/repository',repository.get('name'),'install' ])
+            request = XMLClient().request('PUT', install_url, self.get_xml_str())
+            self._set_xml(request.response)
+            self.modified = True
+            return self.convert_xml_obj_to_xml_element()
+        else:
+            raise appngizer.errors.ElementError("Current XML for {0}({1}) does not validate: {2}".format(self.__class__.__name__, self.name, self.dump()))
+    def update(self, **xdict):
+        '''update() is an alias for install()
+        '''
+        return self.install(**xdict)
+
+    def delete(self):
+        '''
+        :raises appngizer.errors.ElementError: Method is not avaible for entity
+        '''
+        raise appngizer.errors.ElementError("Method not available for {0}({1})".format(self.__class__.__name__, self.name))
+
 
 
 class Subject(Element):
     '''
-        Class to manage subjects of an appNG instance
+        Class to manage a subject
     '''
+    FIELDS = OrderedDict()
+    FIELDS['realName'] = ''
+    FIELDS['email'] = ''
+    FIELDS['description'] = ''
+    FIELDS['digest'] = ''
+    FIELDS['timeZone'] = 'Europe/Berlin'
+    FIELDS['language'] = 'en'
+    FIELDS['type'] = 'LOCAL_USER'
     
-    ALLOWED_FIELDS = ['realName', 'email', 'description', 'digest', 'timeZone', 'language', 'type']
-    ALLOWED_CHILDS = ['groups']
+    CHILDS = OrderedDict()
+    CHILDS['groups'] = None
+    ATTRIBUTES = {'name': ''}
+    
+    PRESERVED_FIELDS = ['description','email','timeZone','language','type']
+    
     TYPE = 'Subject'
     TYPE_C = 'Subjects'
 
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.subject(
-            Element.realName(),
-            Element.email(),
-            Element.description(),
-            Element.digest(),
-            Element.timeZone('Europe/Berlin'),
-            Element.language('en'),
-            Element.type('LOCAL_USER'),
-            Element.groups(),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
-
-    def get_digest_hash(self):
-        '''Gets digest field value from subject
-
-        :return: digest of subject as string
-        '''
-        subject_xml = self.read()
-        subject_digest = subject_xml.xpath('/a:subject/a:digest', namespaces=self.XPATH_DEFAULT_NAMESPACE)
-        return subject_digest[0].text
-
     def digest_match_hash(self, digest, hashed):
-        '''Checks if digest match hash
+        '''Check if digest match hash
         
         If digest does not start with '$2a$' it will handled as plaintext
         otherwise digest is directly matched against hashed
         
         :param str digest: digest of subject
         :param str hashed: bcrypt hash of digest to match
-        :return: bool (True if match, False if not match)
+        :return: bool (True if match)
         '''
-        if digest.startswith('$2a$'):
-            if digest == hashed:
+        if str(digest).startswith('$2a$'):
+            if str(digest) == str(hashed):
                 return True
             else:
                 return False
         else:
-            if bcrypt.hashpw(digest, hashed) == hashed:
+            if bcrypt.hashpw(str(digest), str(hashed)) == str(hashed):
                 return True
             else:
                 return False
 
-    def create(self, realName, digest, email, description=None, language='en', type='LOCAL_USER', timeZone='Europe/Berlin', groups=[]):
-        '''Creates a new subject
+    def create(self, **xdict):
+        '''Create subject
 
-        :param str realName: real name
-        :param str digest: digest of subject (can be plaintext or bcrypt hash ($2a$13$))
-        :param str email: e-mail address
-        :param str description: short description
-        :param str language: language setting
-        :param str type: subject type (LOCAL_USER|GLOBAL_USER|GLOBAL_GROUP)
-        :param str timeZone: timezone setting
-        :param list groups: list of :class:`Group` objects the subject should be assigned to
-        :return: xml of created subject
+        :param str xdict['realName']*: Real name of subject 
+        :param str xdict['email']*: E-Mail address of subject 
+        :param str xdict['description']: Short description of subject
+        :param str xdict['digest']*: Password as plaintext or bcrypt hash
+        :param str xdict['timeZone']: Timezone for subject
+        :param str xdict['language']: Language for subject
+        :param str xdict['type']:  Type of subject (LOCAL_USER|GLOBAL_USER|GLOBAL_GROUP)
+        :return: lxml.etree.Element
         '''
-        
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        return self._create(fdict)
+        return self._create(xdict)
 
-    def update(self, realName, digest, email, description=None, language='en', type='LOCAL_USER', timeZone='Europe/Berlin', groups=[]):
-        '''Updates a subject
+    def update(self, **xdict):
+        '''Update subject
 
-        :param str realName: real name
-        :param str digest: digest of subject (can be plaintext or bcrypt hash ($2a$13$))
-        :param str email: e-mail address
-        :param str description: short description
-        :param str language: language setting
-        :param str type: subject type (LOCAL_USER|GLOBAL_USER|GLOBAL_GROUP)
-        :param str timeZone: timezone setting
-        :param list groups: list of :class:`Group` objects the subject should be assigned to
-        :return: xml of updated subject
+        :param str xdict['realName']: Real name of subject 
+        :param str xdict['email']: E-Mail address of subject 
+        :param str xdict['description']: Short description of subject
+        :param str xdict['digest']: Password as plaintext or bcrypt hash
+        :param str xdict['timeZone']: Timezone for subject
+        :param str xdict['language']: Language for subject
+        :param str xdict['type']:  Type of subject (LOCAL_USER|GLOBAL_USER|GLOBAL_GROUP)
+        :return: lxml.etree.Element
         '''
-        if self.digest_match_hash(digest, self.get_digest_hash()):
-            digest = self.get_digest_hash()
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        return self._update(fdict)
+        if 'digest' in xdict:
+            old_digest = self.xml.digest
+            new_digest = xdict['digest']
+            if self.digest_match_hash(new_digest, old_digest):
+                xdict['digest'] = old_digest
+        return self._update(xdict)
 
-    def is_update_needed(self, realName, digest, email, description=None, language='en', type='LOCAL_USER', timeZone='Europe/Berlin', groups=[]):
-        '''Checks if update of subject is needed
+    def is_update_needed(self, **xdict):
+        '''Check if update of subject is needed
 
-        :param str realName: real name
-        :param str digest: digest of subject (can be plaintext or bcrypt hash ($2a$13$))
-        :param str email: e-mail address
-        :param str description: short description
-        :param str language: language setting
-        :param str type: subject type (LOCAL_USER|GLOBAL_USER|GLOBAL_GROUP)
-        :param str timeZone: timezone setting
-        :param list groups: list of :class:`Group` objects the subject should be assigned to
-        :return: bool (True if needed, False if not needed), xml of current subject, xml of desired subject
+        :param str xdict['realName']: Real name of subject 
+        :param str xdict['email']: E-Mail address of subject 
+        :param str xdict['description']: Short description of subject
+        :param str xdict['digest']: Password as plaintext or bcrypt hash
+        :param str xdict['timeZone']: Timezone for subject
+        :param str xdict['language']: Language for subject
+        :param str xdict['type']:  Type of subject (LOCAL_USER|GLOBAL_USER|GLOBAL_GROUP)
+        :return: (bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated))
         '''
-        if self.digest_match_hash(digest, self.get_digest_hash()):
-            digest = self.get_digest_hash()
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        return self._is_update_needed(fdict)
+        if 'digest' in xdict:
+            old_digest = self.xml.digest
+            new_digest = xdict['digest']
+            if self.digest_match_hash(new_digest, old_digest):
+                xdict['digest'] = old_digest
+        return self._is_update_needed(xdict)
+
 
 
 class Group(Element):
     '''
-        Class to manage groups of an appNG instance.
+        Class to manage a group
     '''
+    FIELDS = OrderedDict()
+    FIELDS['description'] = ''
+    CHILDS = OrderedDict()
+    CHILDS['roles'] = None
+    ATTRIBUTES = {'name': ''}
     
-    ALLOWED_FIELDS = ['description']
-    ALLOWED_CHILDS = ['roles']
+    PRESERVED_FIELDS = ['description']
+
     TYPE = 'Group'
     TYPE_C = 'Groups'
 
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.group(
-            Element.description(),
-            Element.roles(),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
+    def create(self, **xdict):
+        '''Create group
 
-    def create(self, description=None, roles=[]):
-        '''Creates a new group
-
-        :param str description: short description
-        :param list roles: list of :class:`Role` objects the group should be assigned to
-        :return: xml of created group
+        :param str xdict['description']: Short description of group 
+        :param list xdict['roles']: List of role lxml.objectify.ObjectifiedElements
+        :return: lxml.etree.Element
         '''
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        return self._create(fdict)
+        return self._create(xdict)
 
-    def update(self, description=None, roles=[]):
-        '''Updates a group
+    def update(self, **xdict):
+        '''Update group
 
-        :param str description: short description
-        :param list roles: list of :class:`Role` objects the group should be assigned to
-        :return: xml of updated group
+        :param str xdict['description']: Short description of group 
+        :param list xdict['roles']: List of role lxml.objectify.ObjectifiedElements
+        :return: lxml.etree.Element
         '''
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        return self._update(fdict)
+        return self._update(xdict)
 
-    def is_update_needed(self, description=None, roles=[]):
-        '''Checks if update of group is needed
+    def is_update_needed(self, **xdict):
+        '''Check if update of group is needed
 
-        :param str description: short description
-        :param list roles: list of :class:`Role` objects the group should be assigned to
-        :return: bool (True if needed, False if not needed), xml of current group, xml of desired group
+        :param str xdict['description']: Short description of group 
+        :param list xdict['roles']: List of role lxml.objectify.ObjectifiedElements
+        :return: (bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated))
         '''
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        return self._is_update_needed(fdict)
+        return self._is_update_needed(xdict)
+
 
 
 class Role(Element):
     '''
-        Class to manage roles of an appNG instance
+        Class to manage a role
     '''
+    FIELDS = OrderedDict()
+    FIELDS['application'] = ''
+    FIELDS['description'] = ''
+    CHILDS = OrderedDict()
+    CHILDS['permissions'] = None
+    ATTRIBUTES = {'name': ''}
     
-    ALLOWED_FIELDS = ['application', 'description']
-    ALLOWED_CHILDS = ['permissions']
+    PRESERVED_FIELDS = ['description']
+
     TYPE = 'Role'
     TYPE_C = 'Roles'
-
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.role(
-            Element.application(),
-            Element.description(),
-            Element.permissions(),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
-
-    def create(self, description=None, permissions=[]):
-        '''Creates a new role
-
-        :param str description: short description
-        :param list permissions: list of :class:`Permission` objects the role should be assigned to
-        :return: xml of created role
+    
+    def __init__(self, name=None, parents=[]):
         '''
-        # We have to set an explicit application element which we can create from the parent element
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        fdict.update({'application':self.parents[0].name})
-        return self._create(fdict)
-
-    def update(self, description=None, permissions=[]):
-        '''Updates a role
-
-        :param str description: short description
-        :param list permissions: list of :class:`Permission` objects the role should be assigned to
-        :return: xml of updated role
+        :param str name: Name of entity
+        :param list parents: List of :class:`Element` objects which are parents of the current entity
         '''
-        # We have to set an explicit application element which we can create from the parent element
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        fdict.update({'application':self.parents[0].name})
-        return self._update(fdict)
+        self.name = name
+        self.parents = parents
+        self.url = self.get_url_dict()
+        self.xml = self._get_xml_template_role()
+        self.loaded = False
+        self.modified = False
+    
+    def _get_xml_template_role(self):
+        xml_template = self._get_xml_template()
+        xml_template.application = self.parents[0].name
+        return xml_template
 
-    def is_update_needed(self, description=None, permissions=[]):
-        '''Checks if update of role is needed
+    def create(self, **xdict):
+        '''Create role
 
-        :param str description: short description
-        :param list permissions: list of :class:`Permission` objects the role should be assigned to
-        :return: bool (True if needed, False if not needed), xml of current role, xml of desired role
+        :param str xdict['description']: Short description of role
+        :param list xdict['permissions']: List of permission lxml.objectify.ObjectifiedElements
+        :return: lxml.etree.Element
         '''
-        # We have to set an explicit application element which we can create from the parent element
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        fdict.update({'application':self.parents[0].name})
-        return self._is_update_needed(fdict)
+        return self._create(xdict)
+
+    def update(self, **xdict):
+        '''Update role
+
+        :param str xdict['description']: Short description of role
+        :param list xdict['permissions']: List of permission lxml.objectify.ObjectifiedElements
+        :return: lxml.etree.Element
+        '''
+        return self._update(xdict)
+
+    def is_update_needed(self, **xdict):
+        '''Check if update of role is needed
+
+        :param str xdict['description']: Short description of role
+        :param list xdict['permissions']: List of permission lxml.objectify.ObjectifiedElements
+        :return: (bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated))
+        '''
+        return self._is_update_needed(xdict)
+
 
 
 class Permission(Element):
     '''
-        Class to manage roles of an appNG instance
+        Class to manage a permission
     '''
+    FIELDS = OrderedDict()
+    FIELDS['application'] = ''
+    FIELDS['description'] = ''
+    ATTRIBUTES = {'name': ''}
     
-    ALLOWED_FIELDS = ['description']
+    PRESERVED_FIELDS = ['description']
+
     TYPE = 'Permission'
     TYPE_C = 'Permissions'
-
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.permission(
-            Element.application(),
-            Element.description(),
-            name=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
-
-    def create(self, description=None):
-        '''Creates a new permission
-
-        :param str description: short description
-        :return: xml of created permission
+    
+    def __init__(self, name=None, parents=[]):
         '''
-        # We have to set an explicit application element which we can create from the parent element
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        fdict.update({'application':self.parents[0].name})
-        return self._create(fdict)
-
-    def update(self, description=None):
-        '''Updates a permission
-
-        :param str description: short description
-        :return: xml of updated permission
+        :param str name: Name of entity
+        :param list parents: List of :class:`Element` objects which are parents of the current entity
         '''
-        # We have to set an explicit application element which we can create from the parent element
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        fdict.update({'application':self.parents[0].name})
-        return self._update(fdict)
+        self.name = name
+        self.parents = parents
+        self.url = self._get_url_dict()
+        self.xml = self._get_xml_template_permission()
+        self.loaded = False
+        self.modified = False
+    
+    def _get_xml_template_permission(self):
+        xml_template = self._get_xml_template()
+        xml_template.application = self.parents[0].name
+        return xml_template
 
-    def is_update_needed(self, description=None):
-        '''Checks if update of permission is needed
+    def create(self, **xdict):
+        '''Create permission
 
-        :param str description: short description
-        :return: xml of updated permission
-        :return: bool (True if needed, False if not needed), xml of current permission, xml of desired permission
+        :param str xdict['description']: Short description of permission
+        :return: lxml.etree.Element
         '''
-        # We have to set an explicit application element which we can create from the parent element
-        fdict = dict([(i, locals()[i]) for i in (locals().keys())])
-        fdict.update({'application':self.parents[0].name})
-        return self._is_update_needed(fdict)
+        return self._create(xdict)
 
+    def update(self, **xdict):
+        '''Update permission
+
+        :param str xdict['description']: Short description of permission
+        :return: lxml.etree.Element
+        '''
+        return self._update(xdict)
+
+    def is_update_needed(self, **xdict):
+        '''Check if update of permission is needed
+
+        :param str xdict['description']: Short description of permission
+        :return: (bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated))
+        '''
+        return self._is_update_needed(xdict)
+    
+    
 
 class Platform(Element):
     '''
-        Class to manage the platform of an appNG instance.
+        Class to manage the platform
     '''
     
-    ALLOWED_FIELDS = []
     TYPE = 'Platform'
     TYPE_C = 'Platform'
 
-    def __init__(self, name='', parents=None, xml=None):
-        # : Platform entity does not have a name attribute, we set it to an empty string
-        self.name = ''
-        self.type = self.TYPE
-        self.type_c = self.TYPE_C
-        self.parents = self._set_parents(parents)
-        self.url = self._set_url()
-        self.xml = self._set_xml(xml)
-
-    def read(self):
-        '''Reads a platform
-
-        :raise errors.ElementError: read is not avaible for platform
-        '''
-        msg = "read not available for {0}({1})".format(self.type, self.name)
-        log.error(msg)
-        raise appngizer.errors.ElementError(msg)
-
     def delete(self):
-        '''Deletes a platform
-
-        :raise errors.ElementError: delete is not avaible for platform
         '''
-        msg = "delete not available for {0}({1})".format(self.type, self.name)
-        log.error(msg)
-        raise appngizer.errors.ElementError(msg)
-
-    def exist(self):
-        '''Checks if platform already exist
-
-        :raise errors.ElementError: exist is not avaible for platform
+        :raises appngizer.errors.ElementError: Method is not avaible for entity
         '''
-        msg = "exist not available for {0}({1})".format(self.type, self.name)
-        log.error(msg)
-        raise appngizer.errors.ElementError(msg)
+        raise appngizer.errors.ElementError("Method not available for {0}({1})".format(self.__class__.__name__, self.name))
 
-    def reload(self):
-        '''Reloads a platform
 
-        :return: bool (True if reloaded, False if not reloaded)
+
+class Grant(Element):
+    '''
+        Class to manage a site application grant
+    '''
+    
+    TYPE = 'Grant'
+    TYPE_C = 'Grant'
+    
+    def _get_xml_template(self):
+        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
+        xml_template = Element.grant(
+            site=self.name
+        )
+        return xml_template
+    
+    def load(self):
+        '''Load grant data from Grants object
+        :return: None
         '''
-        if XMLClient().request('POST', self.url['self'] + '/reload'):
-            return True
+        log.debug("Load installed {0}({1})".format(self.__class__.__name__, self.name))
+        grant = Grants(parents=self.parents).get_grant(self.name)
+        if grant is not None:
+            self._set_xml(grant)
+            self.loaded = True
         else:
-            return False
+            raise appngizer.errors.ElementNotFound('Grant {} is not available'.format(self.name))
+    
+    def delete(self):
+        '''
+        :raises appngizer.errors.ElementError: Method is not avaible for entity
+        '''
+        raise appngizer.errors.ElementError("Method not available for {0}({1})".format(self.__class__.__name__, self.name))
+
 
 
 class Database(Element):
     '''
-        Class to manage databases of an appNG instance
+        Class to manage site application databases of an appNG instance
     '''
-    
-    ALLOWED_FIELDS = ['user', 'password', 'driver', 'url']
     TYPE = 'Database'
     TYPE_C = 'Databases'
-
-    def __init__(self, name='', parents=None, xml=None):
-        # : Database entity does not have a name attribute, we set it to an empty string
-        self.name = ''
-        self.type = self.TYPE
-        self.type_c = self.TYPE_C
-        self.parents = self._set_parents(parents)
-        self.url = self._set_url()
-        self.xml = self._set_xml(xml)
-
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.database(
-            Element.type(),
-            Element.user(),
-            Element.password(),
-            Element.dbVersion(),
-            Element.driver(),
-            Element.url(),
-            Element.ok(),
-            id=''
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
-
-    def _exist(self):
-        '''Checks if database already exist
-        
-        Currently we only check if read was succesfully and contains an database element
-
-        :return: bool (True if exist, False if not exist)
-        '''
-        element_exist = False
-        elements_xml = eval(self.type_c)(None, self.parents)._read()
-        if elements_xml.tag == '{http://www.appng.org/schema/appngizer}database':
-            element_exist = True
-        log.info("Checked if {}({}) already exist and this is {}".format(self.type, self.name, element_exist))
-        return element_exist
-        
-    def _update(self, fdict):
-        '''Updates entity from a given dict
-
-        :param dict fdict: dictionary of fields for the existing entity
-        :return: xml of the updated entity
-        '''
-        self._set_xml(self.read())
-        # hack to change fdict['password'] to original value
-        plain_password = fdict['password']
-        if self._is_update_needed(fdict)[0]:
-            log.info('Update {0}({1})'.format(self.type, self.name))
-            # hack to change fdict['password'] to original value
-            fdict['password'] = plain_password
-            self.xml = self._update_xml_with_kwargs(self.xml, fdict)[0]
-            if self.is_valide_xml(self.xml):
-                request = XMLClient().request('PUT', self.url['self'], str(self))
-                response_xml = request.response_transf
-                self._set_xml(self.read())
-                return response_xml
-            else:
-                log.error("Current XML for {0}({1}) does not validate".format(self.type, self.name))
-                raise appngizer.errors.ElementError("Current XML for {0}({1}) does not validate: {2}".format(self.type, self.name, self.dump()))
+    FIELDS = OrderedDict()
+    FIELDS['type'] = ''
+    FIELDS['user'] = ''
+    FIELDS['password'] = ''
+    FIELDS['dbVersion'] = ''
+    FIELDS['driver'] = ''
+    FIELDS['url'] = ''
+    FIELDS['ok'] = ''
+    CHILDS = OrderedDict()
+    ATTRIBUTES = {'id': ''}
+    
+    def _get_sharedsecret(self,xdict):
+        if 'salt' in xdict:
+            sharedseceret = xdict['salt']
         else:
-            log.warn("No update needed for {0}({1})".format(self.type, self.name))
-            return self.xml
+            p_sharedsecret = Property('sharedSecret', parents=[ Platform() ])
+            p_sharedsecret.load()
+            sharedseceret = p_sharedsecret.xml.value.text
+        return sharedseceret
+    
+    def update(self, **xdict):
+        '''Update database
 
-    def _is_update_needed(self, fdict):
-        '''Checks if update of entity is needed
-
-        :param dict fdict: dictionary of fields for the existing entity
-        :return: bool (True if needed, False if not needed), xml of current entity, xml of desired entity
+        :param str xdict['user']: DB user
+        :param str xdict['password']: DB password 
+        :param str xdict['driver']: DB driver to use 
+        :param bool xdict['type']: DB type to use
+        :param bool xdict['url']: DB URI
+        :return: lxml.etree.Element
         '''
-        # change password in fdict to a bcrypt hash because read() will 
-        # always give us a bcrypt hash instead of plaintext password
-        salt = fdict['salt']
+        return self._update(xdict)
+
+    def is_update_needed(self, **xdict):
+        '''Check if update of database is needed
+
+        :param str xdict['user']: DB user
+        :param str xdict['password']: DB password 
+        :param str xdict['driver']: DB driver to use 
+        :param bool xdict['type']: DB type to use
+        :param bool xdict['url']: DB URI
+        :return: (bool (True if needed, False if not needed), lxml.etree.Element (current), lxml.etree.Element of (updated))
+        '''
+        if 'password' in xdict:
+            xdict_copy = deepcopy(xdict) 
+            xdict_copy['password'] = self.gen_password_hash(xdict['password'], self._get_sharedsecret(xdict))
+        return self._is_update_needed(xdict)
+        
+    def gen_password_hash(self, password, salt):
+        '''Generate bcrypt hash from plaintext password and salt
+
+        :param str password: Plaintext password
+        :param str salt: Plaintext salt 
+        :return: str
+        '''
         salt_sha256 = hashlib.sha256(salt.encode())
-        password_hash = bcrypt.hashpw(fdict['password'], '$2a$13$' + salt_sha256.hexdigest())
-        fdict['password'] = password_hash
-
-        current_xml = self.read()
-        desired_element = eval(self.type)(self.name, self.parents)
-        desired_element.xml = deepcopy(current_xml)
-        desired_xml, is_update_needed = desired_element._update_xml_with_kwargs(desired_element.xml, fdict)
-        log.info('Checked if update is needed for {0}({1}) and this is {2}'.format(self.type, self.name, str(is_update_needed)))
-        return is_update_needed, current_xml, desired_xml
-
-    def create(self):
-        '''Creates a database
-
-        :raise errors.ElementError: create is not avaible for database
-        '''
-        msg = "create not available for {0}({1})".format(self.type, self.name)
-        log.error(msg)
-        raise appngizer.errors.ElementError(msg)
+        return bcrypt.hashpw(password, '$2a$13$' + salt_sha256.hexdigest())
 
     def delete(self):
-        '''Delete a database
-        
-        :raise errors.ElementError: delete is not avaible for database
         '''
-        msg = "Delete not available for {0}({1})".format(self.type, self.name)
-        log.error(msg)
-        raise appngizer.errors.ElementError(msg)
-
-    def update(self, user, password, salt, driver, url):
-        '''Updates a database
-
-        :param str user: database username
-        :param str password: database password
-        :param str salt: salt (appNGizer uses platform.sharedsecret) to generate bcrypt hash of password
-        :param str driver: jdbc driver class
-        :param str url: jdbc url of database
-        :return: xml of updated database
+        :raises appngizer.errors.ElementError: Method is not avaible for entity
         '''
-        local_list = list(self.ALLOWED_FIELDS)
-        local_list.append('salt')
-        fdict = dict([(i, locals()[i]) for i in (local_list)])
-        return self._update(fdict)
+        raise appngizer.errors.ElementError("Method not available for {0}({1})".format(self.__class__.__name__, self.name))
 
-    def is_update_needed(self, user, password, salt, driver, url):
-        '''Checks if update of database is needed
-
-        :param str user: database username
-        :param str password: database password
-        :param str salt: salt (appNGizer uses platform.sharedsecret) to generate bcrypt hash of password
-        :param str driver: jdbc driver class
-        :param str url: jdbc url of database
-        :return: bool (True if needed, False if not needed), xml of current database, xml of desired database
-        '''
-        local_list = list(self.ALLOWED_FIELDS)
-        local_list.append('salt')
-        fdict = dict([(i, locals()[i]) for i in (local_list)])
-        return self._is_update_needed(fdict)
 
 
 class Elements(Element):
     '''
         Abstract class of an appNGizer container element
-        All further appngizer container elements will inherits from this class
-        
-        Currently only reading is implemented.
     '''
-
-    def __init__(self, name='', parents=[], xml=None):
-        '''
-            :param list parents: List of :class:`Element` objects which are the parent of the current entity
-            :param lxml.etree.Element xml: xml representation of the entity
-        '''
-        self.name = ''
-        self.type = self.TYPE_C
-        self.type_element = self.TYPE
-        self.parents = parents
-        self.url = self._set_url()
-        self.xml = self._set_xml(xml)
-        self.elements = self._set_elements()
-
-    def _set_url(self):
-        url = {'self':None}
-        if not self.parents:
-            url['self'] = self.type_element.lower()
-        else:
-            parents_url = ''
-            for parent in self.parents:
-                parents_url = '/'.join([parents_url, parent.url['self']])
-            url['self'] = '/'.join([parents_url, self.type_element.lower()])
-        return url
-
-    def _set_elements(self):
-        '''Sets and return list of all :class:`Element` objects
-        
-        :return: list of :class:`Element` objects
-        '''
-        elements = []
-        elements_xml = self.read()
-        for element_xml in list(elements_xml):
-            elements.append(eval(self.type_element)(element_xml.get('name'), parents=self.parents))
-        self.elements = elements
-        return elements
-
     def _get_xml_template(self):
-        xml_template = etree.Element('{' + self.XPATH_DEFAULT_NAMESPACE['a'] + '}' + '{0}'.format(self.type.lower()))
+        '''Returns lxml.objectify.ObjectifiedElement template of entity:
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
+        xml_template = Element(self.TYPE_C.lower())
         return xml_template
-
-    def exist(self):
-        '''Check if entity already exist
-
-        :raise errors.ElementError: exist is not avaible for entity
-        '''
-        msg = "exist not available for {0}({1})".format(self.type, self.name)
-        log.error(msg)
-        raise appngizer.errors.ElementError(msg)
-
+    
     def delete(self):
-        '''Deletes an entity
-
-        :raise error.ElementError: delete is not avaible for entity
         '''
-        msg = "delete not available for {0}({1})".format(self.type, self.name)
-        log.error(msg)
-        raise appngizer.errors.ElementError(msg)
-
-    def is_update_needed(self, **kwargs):
-        '''Checks if update of entity is needed
-        
-        :raise error.ElementError: is_update_needed is not avaible for entity
+        :raises appngizer.errors.ElementError: Method is not avaible for entity
         '''
-        msg = "is_update_needed not available for {0}({1})".format(self.type, self.name)
-        log.error(msg)
-        raise appngizer.errors.ElementError(msg)
+        raise appngizer.errors.ElementError("Method not available for {0}({1})".format(self.__class__.__name__, self.name))
+    def exist(self):
+        '''
+        :raises appngizer.errors.ElementError: Method is not avaible for entity
+        '''
+        raise appngizer.errors.ElementError("Method not available for {0}({1})".format(self.__class__.__name__, self.name))
+    def is_update_needed(self, **xdict):
+        '''
+        :raises appngizer.errors.ElementError: Method is not avaible for entity
+        '''
+        raise appngizer.errors.ElementError("Method not available for {0}({1})".format(self.__class__.__name__, self.name))
+
 
 
 class Sites(Elements):
     '''
-        Class to manage sites of an appNG instance
+        Class to manage sites
     '''
     TYPE = 'Site'
     TYPE_C = 'Sites'
 
+    SUBELEMENTS = { 'site': [] }
+
+
 
 class Repositories(Elements):
     '''
-        Class to manage repositories of an appNG instance
+        Class to manage repositories
     '''
     TYPE = 'Repository'
     TYPE_C = 'Repositories'
+    
+    SUBELEMENTS = { 'repository': [] }
+
 
 
 class Properties(Elements):
     '''
-        Class to manage properties of an appNG instance
+        Class to manage properties
     '''
     TYPE = 'Property'
     TYPE_C = 'Properties'
-
-
-class Grants(Elements):
-    '''
-        Class to manage application access for a site
-    '''
     
-    ALLOWED_FIELDS = ['sites']
-    TYPE = 'Grant'
-    TYPE_C = 'Grants'
-    
-    def __init__(self, name='', parents=[], xml=None):
-        '''
-            :param list parents: List of :class:`Element` objects which are the parent of the current entity
-            :param lxml.etree.Element xml: xml representation of the entity
-        '''
-        self.name = ''
-        self.type = self.TYPE_C
-        self.type_element = self.TYPE
-        self.parents = parents
-        self.url = self._set_url()
-        self.xml = self._set_xml(xml)
-        self.elements = self._set_elements()
-        
-    def _read(self):
-        '''Reads entity and return as etree
+    SUBELEMENTS = { 'property': [] }
 
-        :return: xml of the entity
-        '''
-        request = XMLClient().request('GET', self.url['self'])
-        response_xml = request.response_transf
-        return response_xml
-    
-    def _set_url(self):
-        url = {'self':None}
-        if not self.parents:
-            url['self'] = self.type_element.lower()
-        else:
-            parents_url = ''
-            for parent in self.parents:
-                parents_url = '/'.join([parents_url, parent.url['self']])
-            url['self'] = '/'.join([parents_url, self.TYPE_C.lower()])
-        return url
-
-    def _set_elements(self):
-        '''Sets and return list of all :class:`Element` objects
-        
-        :return: list of :class:`Element` objects
-        '''
-        elements = []
-        elements_xml = self.read()
-        for element_xml in list(elements_xml):
-            site = element_xml.xpath('@site')[0]
-            element = Grant(parents=self.parents,xml=Grant(parents=self.parents).read(site)) 
-            elements.append(element)
-            
-        self.elements = elements
-        return elements
-    
-    def _get_xml_template(self):
-        Element = objectify.ElementMaker(annotate=False, namespace=self.XPATH_DEFAULT_NAMESPACE['a'])
-        xml_template = Element.grants(
-        )
-        xml_etree = etree.fromstring(etree.tostring(xml_template))
-        return xml_etree
-    
-    def _grant(self, fdict):
-        '''Updates entity from a given dict
-        :param dict fdict: dictionary of fields for the existing entity
-        :return: xml of the updated entity
-        '''
-        
-        for grant in self.xml.xpath('*', namespaces=self.XPATH_DEFAULT_NAMESPACE):
-            grant.getparent().remove(grant)
-
-        grant_i = 0
-        for grant in self.elements:
-            site = grant.xml.xpath('@site')[0]
-            if site in fdict['sites']:
-                if grant.xml.xpath('text()')[0] == 'false':
-                    grant.xml.text = 'true'
-                    log.info('Grant access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
-                else:
-                    log.info('Already have access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
-            else:
-                if grant.xml.xpath('text()')[0] == 'true':
-                    grant.xml.text = 'false'
-                    log.info('Remove access to application {} in site {} for site {}'.format(self.parents[1].name, self.parents[0], site))
-            self.xml.insert(grant_i, grant.xml)
-            grant_i += 1
-
-        request = XMLClient().request('PUT', self.url['self'], str(self))
-        response_xml = request.response_transf
-        self._set_xml(self.read())
-        return response_xml
-   
-    def grant(self, sites):
-        '''Set grants for list of sites 
-
-        :param list of sites...
-        :return: xml of updated grants
-        '''
-        fdict = dict([(i, locals()[i]) for i in (self.ALLOWED_FIELDS)])
-        return self._grant(fdict)
-    
-    def _is_update_needed(self, sites):
-        '''Checks if update of entity is needed
-
-        :param dict fdict: dictionary of fields for the existing entity
-        :return: bool (True if needed, False if not needed), xml of current entity, xml of desired entity
-        '''
-        current_element = deepcopy(self)
-        current_element.xml = current_element.read()
-        desired_element = Grants(parents=self.parents)
-        desired_element.xml = deepcopy(current_element.xml)
-        
-        is_update_needed = False
-        
-        for grant in desired_element.xml.xpath('*', namespaces=self.XPATH_DEFAULT_NAMESPACE):
-            site = grant.get('site')
-            if site in sites:
-                if grant.xpath('text()')[0] == 'false':
-                    grant.text = 'true'
-                    is_update_needed = True
-            else:
-                if grant.xpath('text()')[0] == 'true':
-                    grant.text = 'false'
-                    is_update_needed = True
-
-        return is_update_needed, self.xml, desired_element.xml
-    
-    def is_update_needed(self, sites):
-        '''Checks if update of grants is needed
-
-        :param list sites: list of sites
-        :return: bool (True if needed, False if not needed), xml of current grants, xml of desired grants
-        '''
-        return self._is_update_needed(sites)
 
 
 class Applications(Elements):
     '''
-        Class to manage application of an appNG instance
+        Class to manage applications
     '''
 
     TYPE = 'Application'
     TYPE_C = 'Applications'
 
-    def read(self, site=None):
-        '''Reads applications global or if given from an assigned site
+    SUBELEMENTS = { 'application': [] }
 
-        :return: xml of the applications
-        '''
-        log.debug('Read {0}({1})'.format(self.type, self.name))
-        if site and type(site) is Site:
-            read_url = '/'.join(site.url['self'], self.url['self'])
-        else:
-            read_url = self.url['self']
-        request = XMLClient().request('GET', read_url)
-        response_xml = request.response_transf
-        log.info("Read {0}({1})".format(self.type, self.name))
-        log.debug(self.dump(response_xml))
-        return response_xml
 
 
 class Packages(Elements):
     '''
-        Class to manage packages of an appNG instance
+        Class to manage packages
     '''
     TYPE = 'Package'
     TYPE_C = 'Packages'
-
-    def _set_url(self):
-        # For a package there is no entity type path component
-        url = {'self':None}
-        parents_url = self.parents[0].url['self']
-        url['self'] = '/'.join([parents_url])
-        return url
-
-    def read(self):
-        '''Reads packages from a repository
-
-        :return: xml of the packages
+    
+    SUBELEMENTS = { 'package': [] }
+    
+    def __init__(self, name=None, parents=[]):
         '''
-        request = XMLClient().request('GET', self.url['self'])
-        response_xml = request.response_transf
-        packages_xml = response_xml.xpath('//a:packages', namespaces=self.XPATH_DEFAULT_NAMESPACE)[0]
-        return packages_xml
+        :param str name: Name of entity
+        :param list parents: List of :class:`Element` objects which are parents of the current entity
+        '''
+        self.name = name
+        self.parents = parents
+        self.xml = self._get_xml_template()
+        self.loaded = False
+        self.modified = False
+        
+    def load(self):
+        '''Load entity via GET and set self.xml from requests.Response.content
+        :return: None
+        '''
+        log.debug("Load {0}({1})".format(self.__class__.__name__, self.name))
+        
+        packages = []
+        repositories = []
+        if len(self.parents) > 0 and type(self.parents[0]) == Repository:
+            repo_obj = self.parents[0]
+            repositories.append(repo_obj)
+        else:
+            repos_obj = Repositories()
+            repos_obj.load()
+            for repo in repos_obj.xml.repository:
+                repo_obj = Repository(repo.get('name'))
+                repositories.append(repo_obj)
+        
+        for repo in repositories:
+            for list_pkg in repo.list_pkgs():
+                if hasattr(list_pkg, 'package'):
+                    for pkg in list_pkg.package:
+                        packages.append(pkg)
+        
+        self.xml.package = packages
+        self.sort_packages_by_version(self.xml)
+        self.loaded = True
+    
+    def find(self, **xdict):
+        '''Find all available packages of a package
+
+        :param str xdict['name']*: Name of package
+        :param dict xdict['filter']: Dictionary of field:value items to filter packages  
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        packages = []
+        repositories = []
+        
+        if len(self.parents) > 0 and type(self.parents[0]) == Repository:
+            repo_obj = self.parents[0]
+            repositories.append(repo_obj)
+        else:
+            repos_obj = Repositories()
+            repos_obj.load()
+            for repo in repos_obj.xml.repository:
+                repo_obj = Repository(repo.get('name'))
+                repositories.append(repo_obj)
+        
+        for repo in repositories:
+            if repo.has_pkg(name=xdict['name']):
+                for list_pkg in repo.list_pkg(name=xdict['name']):
+                    for pkg in list_pkg.package:
+                        if 'filter' in xdict:
+                            filter_ok = True
+                            for key,value in xdict['filter'].iteritems():
+                                if pkg.findtext(self.NS_PREFIX+key) != value:
+                                    filter_ok = False
+                                    break
+                            if filter_ok:
+                                pkg.repository = repo.xml
+                                packages.append(pkg)    
+                        else:
+                            pkg.repository = repo.xml
+                            packages.append(pkg)
+
+        packages_xml = self._get_xml_template()
+        packages_xml.package = packages
+        return self.sort_packages_by_version(packages_xml)
+
+    def sort_packages_by_version(self, xml_obj):
+        '''Sort packages by version
+
+        :param lxml.objectify.ObjectifiedElement xml_obj: Packages ObjectifiedElement to sort
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        packages = xml_obj.find(self.NS_PREFIX+'package')
+        data = []
+        if packages is not None and len(packages) > 0:
+            for package in packages:
+                version = package.findtext(self.NS_PREFIX+'version')
+                timestamp = package.findtext(self.NS_PREFIX+'timestamp')
+                data.append(( version, timestamp, package ))
+            data.sort(reverse=True)
+            packages[:] = [item[-1] for item in data]
+        return xml_obj
+    
 
 
 class Subjects(Elements):
     '''
-        Class to manage subjects of an appNG instance
+        Class to manage subjects
     '''
     TYPE = 'Subject'
     TYPE_C = 'Subjects'
+    
+    SUBELEMENTS = { 'subject': [] }
+
 
 
 class Groups(Elements):
     '''
-        Class to manage groups of an appNG instance
+        Class to manage groups
     '''
     TYPE = 'Group'
     TYPE_C = 'Groups'
+    
+    SUBELEMENTS = { 'group': [] }
+
 
 
 class Roles(Elements):
     '''
-        Class to manage roles of an appNG instance
+        Class to manage roles
     '''
     TYPE = 'Role'
     TYPE_C = 'Roles'
+    
+    SUBELEMENTS = { 'role': [] }
+
 
 
 class Permissions(Elements):
     '''
-        Class to manage permissions of an appNG instance
+        Class to manage permissions
     '''
     TYPE = 'Permission'
     TYPE_C = 'Permissions'
+    
+    SUBELEMENTS = { 'permission': [] }
+
+
+
+class Grants(Elements):
+    '''
+        Class to manage site application grants
+    '''
+    
+    SUBELEMENTS = { 'grant': [] }
+
+    TYPE = 'Grant'
+    TYPE_C = 'Grants'
+    
+    def get_url_dict(self):
+        '''Return dictionary with url path components of the entity
+        
+           url['self'] url path to entity
+           url['ancestor'] url path to entity type
+           url['parents'] url path of parent entities
+        
+        :return: dict
+        '''
+        url = {'self': '', 'ancestor': '', 'parents': '', 'type': self.TYPE_C.lower()}
+
+        # Determine parents URL path
+        if hasattr(self, 'parents'):
+            for parent in self.parents:
+                url['parents'] = ''.join([ url['parents'], parent.url['self'] ])
+        # Determine ancestor URL path
+        url['ancestor'] = '/'.join([url['parents'], url['type']])
+        # Determine self URL path
+        if self.name == None:
+            url['self'] = url['ancestor']
+        else:
+            url['self'] = '/'.join([url['ancestor'], self.name])
+        return url
+    
+    def get_grant(self, name):
+        '''Get grant ObjectifiedElement of a site
+        :param str name: Name of site
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        self.load_if_needed()
+        grant = None
+        if hasattr(self.xml, 'grant') and len(self.xml.grant) > 0:
+            for g in self.xml.grant:
+                if g.get('site') == name:
+                    grant = g
+                    break
+        return grant
+    
+    def update_grant(self, name, is_granted):
+        '''Update grant for a site
+        :param str name: Name of site
+        :param bool is_granted: Site is granted to access application
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        self.load_if_needed()
+        for g in self.xml.grant:
+            if g.get('site') == name:
+                # Do we really know what we are doing?
+                g._setText(str(is_granted).lower())
+                break
+        request = XMLClient().request('PUT', self.url['self'], self.get_xml_str())
+        self._set_xml(request.response)
+        self.modified = True
+        return self.convert_xml_obj_to_xml_element()
+    def update_grants(self, grants=[]):
+        '''Update all grants of a site application
+        :param list grants: List of grant lxml.objectify.ObjectifiedElements
+        :return: lxml.objectify.ObjectifiedElement
+        '''
+        self.load_if_needed()
+        for arg_g in grants:
+            arg_g_site, arg_g_is_granted = arg_g
+            
+            for g in self.xml.grant:
+                if g.get('site') == arg_g_site:
+                    # Do we really know what we are doing?
+                    g._setText(str(arg_g_is_granted).lower())
+                    break
+        request = XMLClient().request('PUT', self.url['self'], self.get_xml_str())
+        self._set_xml(request.response)
+        self.modified = True
+        return self.convert_xml_obj_to_xml_element()
+
 
 
 class Databases(Elements):
     '''
-        Class to manage databases of an appNG instance
+        Class to manage databases
     '''
     TYPE = 'Database'
     TYPE_C = 'Databases'
-
-    def _set_elements(self):
-        # Use @id instead of @name
-        elements = []
-        elements_xml = self.read()
-        for element_xml in list(elements_xml):
-            elements.append(eval(self.type_element)(element_xml.get('id'), parents=self.parents))
-        self.elements = elements
-        return elements
+    
+    SUBELEMENTS = { 'database': [] }
