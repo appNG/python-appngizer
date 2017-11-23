@@ -1609,13 +1609,18 @@ class Packages(Elements):
         :param lxml.objectify.ObjectifiedElement xml_obj: Packages ObjectifiedElement to sort
         :return: lxml.objectify.ObjectifiedElement
         '''
+        from distutils.version import LooseVersion
         packages = xml_obj.find(self.NS_PREFIX+'package')
-        data = []
+        data = [] 
         if packages is not None and len(packages) > 0:
             for package in packages:
                 version = package.findtext(self.NS_PREFIX+'version')
                 timestamp = package.findtext(self.NS_PREFIX+'timestamp')
-                data.append(( version, timestamp, package ))
+                if version is not None:
+                    lversion = LooseVersion(version)
+                else:
+                    lversion = version
+                data.append(( lversion, timestamp, package ))
             data.sort(reverse=True)
             packages[:] = [item[-1] for item in data]
         return xml_obj
