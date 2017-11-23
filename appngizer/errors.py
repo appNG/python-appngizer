@@ -4,6 +4,8 @@ class Error(Exception):
     '''  '''
 class ElementError(Error):
     '''  '''
+class ElementNotFound(Error):
+    '''  '''
 class ClientError(Error):
     '''  '''
 class HttpClientBadRequest(Error):
