@@ -25,6 +25,8 @@ __version__ = appngizer.__version__
 __date__ = appngizer.__date__
 __updated__ = appngizer.__updated__
 
+# TODO: Optimization / rewrite due PYAPPNG-14
+
 def _init_xmlclient(**connection_args):
     if connection_args.get('connection_url',False) and connection_args.get('connection_ssecret',False):
         client = appngizer.client.XMLClient( connection_args.get('connection_url'),connection_args.get('connection_ssecret') ) 
@@ -37,7 +39,7 @@ def _init_xmlclient(**connection_args):
     return client
 
 def _get_parents(element,vargs):
-    parents = None
+    parents = []
     if element in ['property','properties']:
         parents = []
         if vargs.get('site',None):
@@ -74,6 +76,7 @@ def _get_parents(element,vargs):
         parents.append(Site(vargs['gsite']))
         parents.append(Application(vargs['application']))
         return parents
+    return parents
 
 def _get_childs(element,vargs,parents=None):
     childs = []
@@ -117,15 +120,6 @@ def _execute(nargs):
         element = eval(element_title)(nargs.name,parents=parents)
     else:
         element = eval(element_title)(parents=parents)
-    
-    for key in vargs.keys():
-        if key not in element.ALLOWED_FIELDS and key not in element.ALLOWED_CHILDS:
-            if key == 'salt' and element_name == 'database' and cmd_name == 'update':
-                pass
-            elif key == 'site' and element_name == 'grant':
-                pass
-            else:
-                vargs.pop(key)
     
     try:
         if cmd_name == 'create':
