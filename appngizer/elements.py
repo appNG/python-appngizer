@@ -24,8 +24,6 @@ from appngizer.client import XMLClient
 
 log = logging.getLogger(__name__)
 
-# TODO: think about not using parent site for entity application
-
 class XMLElement(object):
     '''
         Abstract class for an XML appNG entity
@@ -61,11 +59,11 @@ class XMLElement(object):
 
     def _get_xml_template(self):
         '''Returns objectify.ObjectElement generated from class constants:
-        
+
            self.FIELDS are entity fields as SubElements
            self.ATTRIBUTES are entity attributes as ObjectElement Attributes
            self.CHILDS are child entities as SubElements
-
+           
         :return: lxml.objectify.ObjectifiedElement
         '''
         Element = objectify.ElementMaker(annotate=False, 
@@ -97,10 +95,10 @@ class XMLElement(object):
     def _set_xml(self, source):
         '''Set self.xml by a given source
         
-        :param lxml.objectify.ObjectifiedElement source: As ObjectifiedElement                
-        :param Requests.response source: As Response object
-        :param dict source: As dictionary               
-        :param lxml.objectify.BoolElement source: As BoolElement               
+        :param lxml.objectify.ObjectifiedElement source(1): As ObjectifiedElement                
+        :param Requests.response source(2): As Response object
+        :param dict source(3): As dictionary               
+        :param lxml.objectify.BoolElement source(4): As BoolElement               
         :return: self
         '''
         if type(source) == BoolElement:
@@ -136,7 +134,7 @@ class XMLElement(object):
         # Process attributes
         for attribute in self.ATTRIBUTES.iterkeys():
             if attribute in xdict:
-                self._set_xml_attribute(attribute, xdict[field])
+                self._set_xml_attribute(attribute, xdict[attribute])
         # Process childs
         for child in self.CHILDS.iterkeys():
             if child in xdict:
@@ -144,7 +142,7 @@ class XMLElement(object):
         # Process elements
         for subelement in self.SUBELEMENTS:
             if subelement in xdict:
-                self._set_xml_subelement(subelement, kwargs[subelement])
+                self._set_xml_subelement(subelement, xdict[subelement])
     
     def _set_xml_from_xml_obj(self, xml_obj):
         '''Process :class:`lxml.objectify.ObjectifiedElement` and call particular methods to set self.xml
@@ -157,10 +155,10 @@ class XMLElement(object):
            self.CHILDS are child entities as SubElements
            self.SUBELEMENTS are child entities as SubElements directly under the root element
 
-           As we deal here with an ObjectifiedElement the xml structure 
+           As we deal here with an :class:`lxml.objectify.ObjectifiedElement` the xml structure 
            can be of any form and just have to validate against the xsd schema. 
         
-        :param lxml.objectify.ObjectifiedElement xml_obj: ObjectifiedElement of the entity
+        :param lxml.objectify.ObjectifiedElement xml_obj: Element of the entity
         :return: None
         '''
         # Process fields
@@ -189,12 +187,13 @@ class XMLElement(object):
         An already existing value can be preserved when given in self.PRESERVED_FIELDS.
         
         :param str field: Name of field
-        :param * value: Value of field, takes any supported lxml.objectify data type
+        :param * value: Value of field as any lxml.objectify element type
         :return: None
         '''
         # If field in PRESERVED_FIELDS an empty value will be not applied 
-        if value == None or value == '':
+        if value == None or value == '' or value == 'None':
             if field not in self.PRESERVED_FIELDS:
+                value = ''
                 self.xml.__setattr__(field, value)
         else:
             # If field in CDATA_FIELDS value is threatened as CDATA
@@ -221,7 +220,7 @@ class XMLElement(object):
         The type of a child item in childs must be a :class:`lxml.objectify.ObjectifiedElement`.
 
         :param str child: Name of child container xml element
-        :param list childs: list of child elements from type lxml.objectify.ObjectifiedElement 
+        :param list childs: list of child elements from type :class:`lxml.objectify.ObjectifiedElement` 
         :return: None
         '''
         if len(childs) > 0:
@@ -244,8 +243,6 @@ class XMLElement(object):
     def _set_xml_subelement(self, subelement, subelements):
         '''Set self.xml subelements
         
-        The type of a subelement item in subelements must be a lxml.objectify.ObjectifiedElement
-
         :param str subelement: Name of subelement xml element
         :param list subelements: List of subelements from type :class:`lxml.objectify.ObjectifiedElement` 
         :return: None
@@ -253,10 +250,10 @@ class XMLElement(object):
         self.xml.__setattr__(subelement, subelements)
                 
     def get_xml_str(self, xml_obj=None):
-        '''Deannotates :class:`lxml.objectify.ObjectifiedElement` and return as string
+        '''Copy, deannotate and return as a :class:`lxml.objectify.ObjectifiedElement` as string
         
-        :param lxml.objectify.ObjectifiedElement xml_obj: ObjectifiedElement to return as string
-        :return: ObjectifiedElement as string
+        :param lxml.objectify.ObjectifiedElement xml_obj: Element to return as string
+        :return: string
         '''
         if xml_obj is None:
             xml_obj = self.xml
@@ -268,7 +265,7 @@ class XMLElement(object):
     def convert_xml_obj_to_xml_element(self, xml_obj=None):
         '''Convert :class:`lxml.objectify.ObjectifiedElement` to :class:`lxml.etree.Element`
 
-        :param lxml.objectify.ObjectifiedElement xml_obj: ObjectifiedElement to convert
+        :param lxml.objectify.ObjectifiedElement xml_obj: Element to convert
         :return: lxml.etree.Element
         '''
         if xml_obj is None:
@@ -302,8 +299,8 @@ class XMLElement(object):
     def dump(self, xml=None):
         '''Pretty print an :class:`lxml.etree.Element` or :class:`lxml.objectify.ObjectifiedElement` as string
         
-        :param lxml.etree.Element xml: Element to pretty print
-        :param lxml.objectify.ObjectifiedElement xml: ObjectifiedElement to pretty print
+        :param lxml.etree.Element xml(1): Element to pretty print
+        :param lxml.objectify.ObjectifiedElement xml(2): Element to pretty print
         :return: string
         '''
         if xml is None:
@@ -321,7 +318,7 @@ class XMLElement(object):
         '''Validate :class:`lxml.etree.Element` against the appNGizer xsd schema
 
         :param lxml.etree.Element xml: Element to be validated, if not self.xml is used
-        :return: bool
+        :return: bool (True if valide)
         '''
         doc = file(self.XSD_APPNGIZER_PATH, 'r')
         xsd_schema_doc = etree.parse(doc)
@@ -368,14 +365,6 @@ class Element(XMLElement):
         '''
         return self._get_url_dict()
     def _get_url_dict(self):
-        '''Return dictionary with url path components of the entity
-        
-           url['self'] url path to entity
-           url['ancestor'] url path to entity type
-           url['parents'] url path of parent entities
-        
-        :return: dict
-        '''
         url = {'self': '', 'ancestor': '', 'parents': '', 'type': self.TYPE.lower()}
 
         # url['parents']
@@ -402,9 +391,6 @@ class Element(XMLElement):
             log.debug("Load {}({})".format(self.__class__.__name__, self.name))
         self._load()
     def _load(self):
-        '''Load entity via GET and set self.xml from requests.Response.content
-        :return: None
-        '''
         request = XMLClient().request('GET', self.url['self'])
         self._set_xml(request.response)
         self.loaded = True
@@ -416,9 +402,6 @@ class Element(XMLElement):
         '''
         self._load_if_needed()
     def _load_if_needed(self):
-        '''Load entity only if it's not already loaded and not modified by any methods
-        :return: None
-        '''
         if self.loaded:
             if self.modified:
                 self.load()
@@ -428,7 +411,7 @@ class Element(XMLElement):
     def _create(self, xdict):
         '''Create entity from a given dict
 
-        :param dict xdict: dictionary of fields and attributes to be set for the new entity
+        :param dict xdict: Dictionary of fields and attributes to be set for the new entity
         :return: lxml.etree.Element
         '''
         if len(self.parents) > 0:
@@ -456,7 +439,7 @@ class Element(XMLElement):
     def _update(self, xdict):
         '''Update entity from a given dict
 
-        :param dict xdict: dictionary of fields and attributes to be set for the updated entity
+        :param dict xdict: Dictionary of fields and attributes to be set for the updated entity
         :return: lxml.etree.Element
         '''
         if len(self.parents) > 0:
@@ -485,10 +468,6 @@ class Element(XMLElement):
             log.debug("Delete {}({})".format(self.__class__.__name__, self.name))
         return self._delete()
     def _delete(self):
-        '''Delete entity
-
-        :return: bool (True if was successfully)
-        '''
         if self.exist():
             XMLClient().request('DELETE', self.url['self'])
             self.modified = False
@@ -499,14 +478,10 @@ class Element(XMLElement):
     def exist(self):
         '''Check if entity already exist
 
-        :return: bool (True if exist, False if not exist)
+        :return: bool (True if exist)
         '''
         return self._exist()
     def _exist(self):
-        '''Check if entity already exist
-
-        :return: bool (True if exist, False if not exist)
-        '''
         try:
             self.load()
             return True
@@ -516,8 +491,8 @@ class Element(XMLElement):
     def _is_update_needed(self, xdict):
         '''Check if update of entity is needed
         
-        :param dict xdict: dictionary of fields and attributes to be set for the updated entity
-        :return: bool (True if needed, False if not needed), lxml.etree.Element of current entity, lxml.etree.Element of updated entity
+        :param dict xdict: Dictionary of fields and attributes to be set for the updated entity
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
         self.load_if_needed()
         
@@ -526,7 +501,7 @@ class Element(XMLElement):
         new_obj._set_xml(xdict)
         
         for field in self.FIELDS.iterkeys():
-            if self.xml[field] != new_obj.xml[field]:
+            if self.xml[field].text != new_obj.xml[field].text:
                 result = True
 
         if len(self.parents) > 0:
@@ -589,14 +564,14 @@ class Site(Element):
         :param str xdict['description']: Short description of site 
         :param bool xdict['active']: Activate site
         :param bool xdict['createRepositoryPath']: Create site repository directory         
-        :return: bool (True if needed, False if not needed), lxml.etree.Element of current site, lxml.etree.Element of updated site
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
         return self._is_update_needed(xdict)  
 
     def reload(self):
         '''Reload site
 
-        :return: bool (True if reloaded, False if not reloaded)
+        :return: bool (True if reloaded)
         '''
         if XMLClient().request('PUT', self.url['self'] + '/reload'):
             return True
@@ -667,7 +642,7 @@ class Repository(Element):
         :param bool xdict['published']: Publish this repository as remote repository
         :param str xdict['mode']: Type of packages to serve (ALL|STABLE|SNAPSHOT) 
         :param str xdict['type']: Type of repository (LOCAL|REMOTE) 
-        :return: bool (True if needed, False if not needed), lxml.etree.Element of current repository, lxml.etree.Element of updated repository
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
         return self._is_update_needed(xdict)  
 
@@ -675,7 +650,7 @@ class Repository(Element):
         '''Check if repository have a package 
         
         :param str xdict['name']*: name of package
-        :return: bool
+        :return: bool (True if has package)
         '''
         pkg_name = xdict['name']
         has_pkg = False
@@ -763,7 +738,7 @@ class Property(Element):
         :param str xdict['defaultValue']: Default value of property 
         :param str xdict['description']: Short description of property 
         :param bool xdict['clob']: Threat value as clob
-        :return: (bool (True if needed, False if not needed), lxml.etree.Element of current property, lxml.etree.Element of desired property)
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
         if xdict.get('clob', False):
             self.CDATA_FIELDS = ['value', 'defaultValue']
@@ -793,7 +768,7 @@ class Application(Element):
         :param str xdict['displayName']: Name of application to display
         :param bool xdict['privileged']: Give privileged rights for application
         :param bool xdict['fileBased']: Store application in filesystem instead of database
-        :param bool xdict['hidden']: Hide application in backend
+        :param bool xdict['hidden']: Hide application in manager backend
         :return: lxml.etree.Element
         '''
         return self._update(xdict)
@@ -833,7 +808,7 @@ class Application(Element):
             return True
 
     def is_assigned(self, site):
-        '''Checks if application is assigned to a site
+        '''Check if application is assigned to a site
 
         :return: bool (True if is assigned)
         '''
@@ -854,7 +829,7 @@ class Application(Element):
         return is_assigned
 
     def assign(self, site):
-        '''Assigns application to a site
+        '''Assign application to a site
 
         :return: bool (True if assigned)
         '''
@@ -871,7 +846,7 @@ class Application(Element):
         return True
 
     def deassign(self, site):
-        '''Deassigns application from a site
+        '''Deassign application from a site
 
         :return: bool (True if deassigned)
         '''
@@ -887,7 +862,7 @@ class Application(Element):
         return True
 
     def deassign_from_all(self):
-        '''Deassigns application from all sites
+        '''Deassign application from all sites
 
         :return: bool (True if deassigned)
         '''
@@ -932,7 +907,7 @@ class Package(Element):
         self.modified = False
         
     def exist(self, **xdict):
-        '''Checks if a package exist
+        '''Check if a package exist
         
         :param str xdict['version']: Filter for a specific version
         :param str xdict['timestamp']: Filter for a specific timestamp
@@ -953,7 +928,7 @@ class Package(Element):
         return package_exist
     
     def is_installed(self):
-        '''Checks if a package is already installed
+        '''Check if a package is already installed
 
         :return: bool (True if installed)
         '''
@@ -968,7 +943,7 @@ class Package(Element):
         return is_installed
 
     def is_update_needed(self, **xdict):
-        '''Checks if update of an installed package is needed
+        '''Check if update of an installed package is needed
 
         :param str xdict['version']: Update to a specific version
         :param str xdict['timestamp']: Update to a specific timestamp
@@ -1165,7 +1140,7 @@ class Subject(Element):
         :param str xdict['timeZone']: Timezone for subject
         :param str xdict['language']: Language for subject
         :param str xdict['type']:  Type of subject (LOCAL_USER|GLOBAL_USER|GLOBAL_GROUP)
-        :return: (bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated))
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
         if 'digest' in xdict:
             old_digest = self.xml.digest
@@ -1195,7 +1170,7 @@ class Group(Element):
         '''Create group
 
         :param str xdict['description']: Short description of group 
-        :param list xdict['roles']: List of role lxml.objectify.ObjectifiedElements
+        :param list xdict['roles']: List of role :class:`lxml.objectify.ObjectifiedElement`s
         :return: lxml.etree.Element
         '''
         return self._create(xdict)
@@ -1204,7 +1179,7 @@ class Group(Element):
         '''Update group
 
         :param str xdict['description']: Short description of group 
-        :param list xdict['roles']: List of role lxml.objectify.ObjectifiedElements
+        :param list xdict['roles']: List of role :class:`lxml.objectify.ObjectifiedElement`s
         :return: lxml.etree.Element
         '''
         return self._update(xdict)
@@ -1213,8 +1188,8 @@ class Group(Element):
         '''Check if update of group is needed
 
         :param str xdict['description']: Short description of group 
-        :param list xdict['roles']: List of role lxml.objectify.ObjectifiedElements
-        :return: (bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated))
+        :param list xdict['roles']: List of role :class:`lxml.objectify.ObjectifiedElement`s
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
         return self._is_update_needed(xdict)
 
@@ -1257,7 +1232,7 @@ class Role(Element):
         '''Create role
 
         :param str xdict['description']: Short description of role
-        :param list xdict['permissions']: List of permission lxml.objectify.ObjectifiedElements
+        :param list xdict['permissions']: List of permission :class:`lxml.objectify.ObjectifiedElement`s
         :return: lxml.etree.Element
         '''
         return self._create(xdict)
@@ -1266,7 +1241,7 @@ class Role(Element):
         '''Update role
 
         :param str xdict['description']: Short description of role
-        :param list xdict['permissions']: List of permission lxml.objectify.ObjectifiedElements
+        :param list xdict['permissions']: List of permission :class:`lxml.objectify.ObjectifiedElement`s
         :return: lxml.etree.Element
         '''
         return self._update(xdict)
@@ -1275,8 +1250,8 @@ class Role(Element):
         '''Check if update of role is needed
 
         :param str xdict['description']: Short description of role
-        :param list xdict['permissions']: List of permission lxml.objectify.ObjectifiedElements
-        :return: (bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated))
+        :param list xdict['permissions']: List of permission :class:`lxml.objectify.ObjectifiedElement`s
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
         return self._is_update_needed(xdict)
 
@@ -1408,6 +1383,9 @@ class Database(Element):
     ATTRIBUTES = {'id': ''}
     
     def _get_sharedsecret(self,xdict):
+        '''Get the sharedsecret from platform properties
+        :return: string
+        '''
         if 'salt' in xdict:
             sharedseceret = xdict['salt']
         else:
@@ -1436,7 +1414,7 @@ class Database(Element):
         :param str xdict['driver']: DB driver to use 
         :param bool xdict['type']: DB type to use
         :param bool xdict['url']: DB URI
-        :return: (bool (True if needed, False if not needed), lxml.etree.Element (current), lxml.etree.Element of (updated))
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element of (updated)
         '''
         if 'password' in xdict:
             xdict_copy = deepcopy(xdict) 
