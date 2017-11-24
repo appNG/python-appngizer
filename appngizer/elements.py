@@ -14,6 +14,7 @@ from copy import deepcopy
 from collections import OrderedDict
 from requests import Response
 from requests.api import request
+from distutils.version import LooseVersion
 
 from lxml import etree
 from lxml import objectify
@@ -933,13 +934,8 @@ class Package(Element):
         :return: bool (True if installed)
         '''
         is_installed = False
-        try:
-            self.load_if_needed()
+        if Application(self.name).exist():
             is_installed = True
-        except appngizer.errors.ElementNotFound:
-            pass
-        except:
-            raise
         return is_installed
 
     def is_update_needed(self, **xdict):
@@ -975,8 +971,9 @@ class Package(Element):
             raise appngizer.errors.ElementNotFound('Package {} is not available with {}'.format(self.name, filter))
 
         if self.xml.version != find_pkg.version:
-            is_update_needed = True        
-        if self.xml.timestamp != find_pkg.timestamp:
+            if LooseVersion(self.xml.version) < LooseVersion(find_pkg.version):
+                is_update_needed = True        
+        elif self.xml.timestamp != find_pkg.timestamp:
             is_update_needed = True
 
         delattr(find_pkg, 'repository')
@@ -992,7 +989,13 @@ class Package(Element):
         if hasattr(find_pkg, 'package'):
             self._set_xml(find_pkg.package)
         else:
-            raise appngizer.errors.ElementNotFound('Package {} is not installed'.format(self.name))
+            # Quick hack to load pkg data from any repository
+            # if currently installed does not comes from parent repository
+            find_pkg = Packages(parents=[]).find(name=self.name, filter=filter)
+            if hasattr(find_pkg, 'package'):
+                self._set_xml(find_pkg.package[0])
+            else:
+                raise appngizer.errors.ElementNotFound('Package {} is not installed'.format(self.name))
         self.loaded = True
 
     def install(self, **xdict):
@@ -1609,7 +1612,6 @@ class Packages(Elements):
         :param lxml.objectify.ObjectifiedElement xml_obj: Packages ObjectifiedElement to sort
         :return: lxml.objectify.ObjectifiedElement
         '''
-        from distutils.version import LooseVersion
         packages = xml_obj.find(self.NS_PREFIX+'package')
         data = [] 
         if packages is not None and len(packages) > 0:
