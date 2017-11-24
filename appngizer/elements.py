@@ -971,7 +971,7 @@ class Package(Element):
             raise appngizer.errors.ElementNotFound('Package {} is not available with {}'.format(self.name, filter))
 
         if self.xml.version != find_pkg.version:
-            if LooseVersion(self.xml.version) < LooseVersion(find_pkg.version):
+            if LooseVersion(self.xml.version.text) < LooseVersion(find_pkg.version.text):
                 is_update_needed = True        
         elif self.xml.timestamp != find_pkg.timestamp:
             is_update_needed = True
