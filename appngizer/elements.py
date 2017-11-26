@@ -25,6 +25,9 @@ from appngizer.client import XMLClient
 
 log = logging.getLogger(__name__)
 
+# TODO: Examine why we still get BooleanValues instead of str.lower() when setting field value
+# TODO: Rework Grant/s Element
+
 class XMLElement(object):
     '''
         Abstract class for an XML appNG entity
@@ -1146,6 +1149,7 @@ class Subject(Element):
         :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
         '''
         if 'digest' in xdict:
+            self.read()
             old_digest = self.xml.digest
             new_digest = xdict['digest']
             if self.digest_match_hash(new_digest, old_digest):
@@ -1422,7 +1426,7 @@ class Database(Element):
         if 'password' in xdict:
             xdict_copy = deepcopy(xdict) 
             xdict_copy['password'] = self.gen_password_hash(xdict['password'], self._get_sharedsecret(xdict))
-        return self._is_update_needed(xdict)
+        return self._is_update_needed(xdict_copy)
         
     def gen_password_hash(self, password, salt):
         '''Generate bcrypt hash from plaintext password and salt
@@ -1720,7 +1724,7 @@ class Grants(Elements):
                     grant = g
                     break
         return grant
-    
+
     def update_grant(self, name, is_granted):
         '''Update grant for a site
         :param str name: Name of site
@@ -1755,6 +1759,37 @@ class Grants(Elements):
         self._set_xml(request.response)
         self.modified = True
         return self.convert_xml_obj_to_xml_element()
+
+    def is_update_needed(self, **xdict):
+        '''Check if update of Grants is needed
+        
+        :param str xdict['grant']: List of grant lxml.objectify.ObjectifiedElements
+        :return: bool (True if needed), lxml.etree.Element (current), lxml.etree.Element (updated)
+        '''
+        rc,o,n = self._is_update_needed(xdict)  
+        return rc,o,n
+    def _is_update_needed(self, xdict):
+        self.load_if_needed()
+
+        result = False
+        new_obj = deepcopy(self)
+        new_obj._set_xml(xdict)
+      
+        for ogrant in self.xml.grant:
+          site = ogrant.get('site') 
+          for ngrant in new_obj.xml.grant:
+            if ngrant.get('site') == site:
+              if ogrant.text != ngrant.text:
+                result = True 
+              break
+
+        if len(self.parents) > 0: 
+            parent_types = ' '.join( [p.TYPE for p in self.parents] )
+            log.debug("Update needed for {} {}({}) is {}".format(parent_types, self.__class__.__name__, self.name, str(result)))
+        else:
+            log.debug("Update needed for {}({}) is {}".format(self.__class__.__name__, self.name, str(result)))
+
+        return result, self.xml, new_obj.xml
 
 
 
