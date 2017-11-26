@@ -1,15 +1,13 @@
-[![Jenkins](https://img.shields.io/jenkins/s/https/jenkins.qa.ubuntu.com/view/Precise/view/All%20Precise/job/precise-desktop-amd64_default.svg?style=flat-square)](https://appng.org/jenkins/job/python-appngizer/)
-[![Read the Docs](https://img.shields.io/readthedocs/pip.svg?style=flat-square)](https://appng.org/python-appngizer/)
-[![PyPI](https://img.shields.io/pypi/v/nine.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
-[![PyPI](https://img.shields.io/pypi/l/Django.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
-[![PyPI](https://img.shields.io/pypi/wheel/Django.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
-[![PyPI](https://img.shields.io/pypi/format/Django.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
-[![PyPI](https://img.shields.io/pypi/status/Django.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
-[![GitHub license](https://img.shields.io/github/license/appNG/python-appngizer.svg)](https://github.com/appNG/python-appngizer/blob/master/LICENSE)
+[![Jenkins](https://img.shields.io/jenkins/s/https/appng.org/view/all/job/python-appngizer.svg?style=flat-square)](https://appng.org/jenkins/job/python-appngizer/)
+[![PyPI](https://img.shields.io/pypi/v/appngizer.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
+[![PyPI](https://img.shields.io/pypi/l/appngizer.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
+[![PyPI](https://img.shields.io/pypi/wheel/appngizer.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
+[![PyPI](https://img.shields.io/pypi/format/appngizer.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
+[![PyPI](https://img.shields.io/pypi/status/appngizer.svg?style=flat-square)](https://pypi.python.org/pypi/appngizer)
 
 # python-appngizer
 
-One Paragraph of project description goes here
+Python library/bindings for appNGizer webapplication
 
 ## Getting Started
 
@@ -17,81 +15,73 @@ These instructions will get you a copy of the project up and running on your loc
 
 ### Prerequisites
 
-What things you need to install the software and how to install them
+To fullfill all 3rd party dependencies you probably need further build dependencies. For debian you can use following command:
 
 ```
-Give examples
+ 
+# jessie
+$ apt-get install python-dev libxml2-dev libxslt1-dev zlib1g-de libffi-dev
+$ pip install --upgrade cffi
+
+# stretch
+$ apt-get install python-dev libxml2-dev libxslt1-dev zlib1g-dev
+
 ```
 
 ### Installing
 
-A step by step series of examples that tell you have to get a development env running
+python-appngizer is available via pip and as debian package (currently just for jessie).
 
-Say what the step will be
-
-```
-Give the example
-```
-
-And repeat
+#### pip
 
 ```
-until finished
-```
 
-End with an example of getting some data out of the system or using it for a little demo
-
-## Running the tests
-
-Explain how to run the automated tests for this system
-
-### Break down into end to end tests
-
-Explain what these tests test and why
+$ pip install appngizer
 
 ```
-Give an example
-```
 
-### And coding style tests
+#### Debian
 
-Explain what these tests test and why
+Add apt repository to your apt sources:
 
 ```
-Give an example
+
+/etc/apt/sources.list.d/appng.list:
+
+# stable packages
+deb http://appng.org/apt stable main
+# unstable packages
+deb http://appng.org/apt unstable main
+
 ```
 
-## Deployment
+Add apt repository public key to your keyring:
 
-Add additional notes about how to deploy this on a live system
+```
 
-## Built With
+$ wget -qO - https://appng.org/gpg/debian.key | sudo apt-key add -
 
-* [Dropwizard](http://www.dropwizard.io/1.0.2/docs/) - The web framework used
-* [Maven](https://maven.apache.org/) - Dependency Management
-* [ROME](https://rometools.github.io/rome/) - Used to generate RSS Feeds
+```
 
-## Contributing
+Update apt sources and install package:
 
-Please read [CONTRIBUTING.md](https://gist.github.com/PurpleBooth/b24679402957c63ec426) for details on our code of conduct, and the process for submitting pull requests to us.
+```
+
+$ apt-get update
+$ apt-get install python-appngizer
+
+```
 
 ## Versioning
 
-We use [SemVer](http://semver.org/) for versioning. For the versions available, see the [tags on this repository](https://github.com/your/project/tags). 
+We use [SemVer](http://semver.org/) for versioning. For the versions available, see the [tags on this repository](https://github.com/appNG/python-appngizer/tags). 
 
 ## Authors
 
-* **Billie Thompson** - *Initial work* - [PurpleBooth](https://github.com/PurpleBooth)
+* **Björn Pritzel** - *Initial work* - [aiticon GmbH](https://aiticon.com)
 
 See also the list of [contributors](https://github.com/your/project/contributors) who participated in this project.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
-
-## Acknowledgments
-
-* Hat tip to anyone who's code was used
-* Inspiration
-* etc
-
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details
