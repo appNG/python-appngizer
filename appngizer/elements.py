@@ -931,14 +931,24 @@ class Package(Element):
             package_exist = False
         return package_exist
     
-    def is_installed(self):
+    def is_installed(self, **xdict):
         '''Check if a package is already installed
 
+        :param str xdict['type']: Type of package (APPLICATION|TEMPLATE)
         :return: bool (True if installed)
         '''
         is_installed = False
-        if Application(self.name).exist():
-            is_installed = True
+        type = xdict.get('type', False)
+        
+        if type and type == 'TEMPLATE':
+            find_pkgs = Packages(parents=self.parents).find(name=self.name,filter={ 'installed': 'true' })
+            if not hasattr(find_pkgs, 'package'):
+                raise appngizer.errors.ElementNotFound('Package {} is not available with {}'.format(self.name, filter))
+            else:
+                is_installed = True
+        else:
+            if Application(self.name).exist():
+                is_installed = True
         return is_installed
 
     def is_update_needed(self, **xdict):
@@ -1334,7 +1344,7 @@ class Platform(Element):
 
         :return: bool (True if reloaded)
         '''
-        if XMLClient().request('PUT', self.url['self'] + '/reload'):
+        if XMLClient().request('POST', self.url['self'] + '/reload'):
             return True
         else:
             return False
