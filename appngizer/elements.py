@@ -1329,6 +1329,16 @@ class Platform(Element):
     TYPE = 'Platform'
     TYPE_C = 'Platform'
 
+    def reload(self):
+        '''Reload Platform
+
+        :return: bool (True if reloaded)
+        '''
+        if XMLClient().request('PUT', self.url['self'] + '/reload'):
+            return True
+        else:
+            return False
+
     def delete(self):
         '''
         :raises appngizer.errors.ElementError: Method is not avaible for entity
