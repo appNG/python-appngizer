@@ -2,27 +2,49 @@
 Changelog
 =========
 
+Version 1.15.0
+==============
+
+* Improvement
+  
+  * [PYAPP-13] [PYAPP-14] General rewrite to use lxml.objectify and appNG entity XML-handling
+
+
+* Task
+  
+  * [PYAPP-9] - Extend documentation
+  * [PYAPP-12] - Adapt changes from APPNG-2027 core -> privileged
+
 Version 1.14.2
 ==============
 
 * Improvement
+  
   * [PYAPP-11] - Grant application access to site via appNGizer
 
+
 * Task
+
   * [PYAPP-6] - Setup Jenkins Build Pipeline
-  * [PYAPP-10] - Release v.1.14.2
+
 
 Version 1.14.1
 ==============
 
 * Bug
+
   * [PYAPP-7] - Specifying package dependencies
+
 
 Version 1.14.0
 ==============
 
 * Initial release
 * Feature
+
   * [PYAPP-2] - Add cli script
+
 * Task
+
   * [PYAPP-1] - Initialising and commit python-appngizer project to vcs
+
