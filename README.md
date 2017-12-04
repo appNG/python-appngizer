@@ -62,6 +62,10 @@ $ apt-get update
 $ apt-get install python-appngizer
 ```
 
+## Documentation
+
+For further documentation of usage and API see [ReadtheDocs](https://appng.org/python-appngizer/). 
+
 ## Versioning
 
 We use [SemVer](http://semver.org/) for versioning. For the versions available, see the [tags on this repository](https://github.com/appNG/python-appngizer/tags). 
@@ -70,7 +74,7 @@ We use [SemVer](http://semver.org/) for versioning. For the versions available, 
 
 * **Björn Pritzel** - *Initial work* - [aiticon GmbH](https://aiticon.com)
 
-See also the list of [contributors](https://github.com/your/project/contributors) who participated in this project.
+See also the list of [contributors](https://github.com/appNG/python-appngizer/contributors) who participated in this project.
 
 ## License
 

@@ -40,6 +40,7 @@ def main():
                 return True
                 
         element.read()
+        print element.dump()
 
         element.is_update_needed(**create_dict)
         element.is_update_needed(**update_dict)
@@ -57,7 +58,7 @@ def main():
             element.reload()
     
     logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
-    client = appngizer.client.XMLClient('http://127.0.0.1:8180/appNGizer','m3gaGhost76')
+    client = appngizer.client.XMLClient('http://127.0.0.1:8080/appNGizer','')
 
     # Test objects
     testsite = Site('testsite')
@@ -114,38 +115,38 @@ def main():
     ### Tests
     
     # Site
-    default_test_case(Sites(), testsite)
+    #default_test_case(Sites(), testsite)
     # Repository
-    default_test_case(Repositories(), testrepo)
+    #default_test_case(Repositories(), testrepo)
     # Package
-    default_test_case(Packages(), testpkg)
+    #default_test_case(Packages(), testpkg)
     # Application
-    default_test_case(Applications(), testapp)
+    #default_test_case(Applications(), testapp)
     # Platform Property
-    default_test_case(Properties(parents=[Platform()]), 
-                      Property( 'testproperty',parents=[Platform()] ))
+    #default_test_case(Properties(parents=[Platform()]), 
+    #                  Property( 'testproperty',parents=[Platform()] ))
     # Application Property
-    default_test_case(Properties(parents=[testapp]), 
-                      Property( 'testproperty',parents=[testapp] ))
+    #default_test_case(Properties(parents=[testapp]), 
+    #                  Property( 'testproperty',parents=[testapp] ))
     # Site Property
-    default_test_case(Properties(parents=[testsite]), 
-                      Property( 'testproperty',parents=[testsite] ))
+    #default_test_case(Properties(parents=[testsite]), 
+    #                  Property( 'testproperty',parents=[testsite] ))
     # Site App Property
-    default_test_case(Properties(parents=[testsite, testapp_os]), 
-                      Property( 'testproperty',parents=[testsite, testapp_os] ))
+    #default_test_case(Properties(parents=[testsite, testapp_os]), 
+    #                  Property( 'testproperty',parents=[testsite, testapp_os] ))
     # Site App Grants
-    default_test_case(Grants(parents=[testsite,testapp]), testgrant)    
+    #default_test_case(Grants(parents=[testsite,testapp]), testgrant)    
     # Permission
-    default_test_case(Permissions(parents=[testapp_os]), testperm)
-    default_test_case(Permissions(parents=[testapp_os]), testperm2)
+    #default_test_case(Permissions(parents=[testapp_os]), testperm)
+    #default_test_case(Permissions(parents=[testapp_os]), testperm2)
     # Role
-    default_test_case(Roles(parents=[testapp_os]), testrole)
+    #default_test_case(Roles(parents=[testapp_os]), testrole)
     # Group
-    default_test_case(Groups(), testgroup)
+    #default_test_case(Groups(), testgroup)
     # Subject
-    default_test_case(Subjects(), testsubject)
+    #default_test_case(Subjects(), testsubject)
     # Database
-    default_test_case(Databases( parents=[testsite] ), testappdb)
+    #default_test_case(Databases( parents=[testsite] ), testappdb)
 
 def run():
     """

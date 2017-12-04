@@ -1,44 +1,54 @@
 Install python-appngizer
 ========================
 
-python-appngizer is available via pip and debian package (tested under jessie).
+python-appngizer is available in PyPi and can be installed via pip. 
+
+For debian based systems we also provide a stable and unstable apt repository.
 
 pip
 ---
+
+To fullfill all 3rd party dependencies you probably need further build 
+dependencies. On debian you can use the following command:
+
+.. code-block:: bash
+    
+    # jessie
+    $ apt-get install python-dev libxml2-dev libxslt1-dev zlib1g-de libffi-dev
+    $ pip install --upgrade cffi
+    
+    # stretch
+    $ apt-get install python-dev libxml2-dev libxslt1-dev zlib1g-dev
+
+And finally:
 
 .. code-block:: bash
     
     pip install appngizer
 
-To fullfill all 3rd party dependencies you probably need further
-build dependencies. Under debian you can use following command:
-
-.. code-block:: bash
-    
-    apt-get install ...
-
 Debian
 ------
 
-Add our apt repository to your apt sources:
+Add apt repository to your apt sources:
 
 .. code-block:: bash
-
+    
     /etc/apt/sources.list.d/appng.list:
+    
     # stable packages
     deb http://appng.org/apt stable main
     # unstable packages
     deb http://appng.org/apt unstable main
 
-Add our apt repository public key:
+Add apt repository public key to your keyring:
 
 .. code-block:: bash
-
-  ...
-
-Update souces and install package:
+    
+    $ wget -qO - https://appng.org/gpg/debian.key | sudo apt-key add -
+    
+And finally update apt sources and install package:
 
 .. code-block:: bash
-
-    apt-get update
-    apt-get install python-appngizer
+    
+    $ apt-get update
+    $ apt-get install python-appngizer
