@@ -605,6 +605,24 @@ class Repository(Element):
     TYPE = 'Repository'
     TYPE_C = 'Repositories'
 
+    def _create(self, xdict):
+        '''Create repository from a given dict
+
+        :param dict xdict: Dictionary of fields and attributes to be set for the new repository
+        :return: lxml.etree.Element
+        '''
+        if len(self.parents) > 0:
+            parent_types = ' '.join( [p.TYPE for p in self.parents] )
+            log.debug("Create {} {}({})".format(parent_types, self.__class__.__name__, self.name))
+        else:
+            log.debug("Create {}({})".format(self.__class__.__name__, self.name))
+        self._set_xml(xdict)
+        if self.is_valide_xml():
+            request = XMLClient().request('POST', self.url['ancestor'], self.get_xml_str())
+            self.modified = True
+            return self.convert_xml_obj_to_xml_element()
+        else:
+            raise appngizer.errors.ElementError("Current XML for {0}({1}) does not validate: {2}".format(self.__class__.__name__, self.name, self.dump()))
     def create(self, **xdict):
         '''Create repository
 
