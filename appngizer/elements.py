@@ -960,9 +960,7 @@ class Package(Element):
         
         if type and type == 'TEMPLATE':
             find_pkgs = Packages(parents=self.parents).find(name=self.name,filter={ 'installed': 'true' })
-            if not hasattr(find_pkgs, 'package'):
-                raise appngizer.errors.ElementNotFound('Package {} is not available with {}'.format(self.name, filter))
-            else:
+            if hasattr(find_pkgs, 'package'):
                 is_installed = True
         else:
             if Application(self.name).exist():
