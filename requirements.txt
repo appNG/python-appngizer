@@ -5,7 +5,7 @@ certifi==2017.7.27.1
 cffi==1.9.1
 chardet==3.0.4
 idna==2.0
-lxml==3.4.0
+lxml==4.6.3
 beautifulsoup==3.2.1
 pycparser==2.10
 requests==2.4.3
